@@ -24,7 +24,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
 } from 'recharts';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './lib/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { signInWithPopup, signOut, onAuthStateChanged, User, signInAnonymously } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, where, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- CONSTANTES GLOBAIS ---
@@ -670,11 +670,20 @@ const App = () => {
   }, [activeTab, page, wizPhase, wizStep, wizSubPhase]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      setAuthReady(true);
       if (u) {
+        setAuthReady(true);
         fetchInitialData(u.uid);
+      } else {
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error("Erro no login anônimo", error);
+          setUser({ uid: 'convidado', email: 'convidado@local', displayName: 'Convidado' } as any);
+          fetchInitialData('convidado');
+          setAuthReady(true); // Fallback so it doesn't hang forever
+        }
       }
     });
     return () => unsubscribe();
@@ -1366,53 +1375,8 @@ const App = () => {
     );
   }
 
-  if (!user) {
-    return (
-      <div className={`flex flex-col items-center justify-center h-screen p-8 text-center relative overflow-hidden ${isDark ? 'bg-slate-950' : 'bg-slate-50'}`}>
-        {/* Background Decorative Elements */}
-        <div className={`absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b ${isDark ? 'from-blue-900/20 to-transparent' : 'from-[#003B95]/10 to-transparent'} pointer-events-none`} />
-        
-        <div className={`relative z-10 w-full max-w-md p-10 rounded-3xl shadow-2xl border ${isDark ? 'bg-slate-900/80 backdrop-blur-xl border-slate-800 shadow-black/50' : 'bg-white/80 backdrop-blur-xl border-gray-200 shadow-blue-900/5'}`}>
-          <div className="flex justify-center mb-6">
-            <div className={`w-20 h-20 rounded-2xl flex flex-col items-center justify-center shadow-inner border ${isDark ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-white to-gray-50 border-gray-200'}`}>
-              <Eye size={36} className={`mb-1 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`} />
-              <span className={`text-[10px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Argos</span>
-            </div>
-          </div>
-          
-          <h1 className={`text-4xl font-black tracking-tighter mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>SISTEMA ARGOS</h1>
-          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}>Controle de Frota Operacional</h2>
-          
-          <p className={`text-sm mb-10 leading-relaxed ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-            Acesso restrito. Faça login para continuar com as vistorias técnicas e gestão da frota.
-          </p>
-          
-          <button 
-            onClick={login}
-            className={`w-full py-4 rounded-xl font-bold transition-all shadow-lg flex items-center justify-center space-x-3 duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-2px] hover:shadow-xl active:translate-y-[1px] active:shadow-md`}
-          >
-            <LogIn size={20} />
-            <span>Autenticar com Google</span>
-          </button>
-          
-          <div className="mt-8 flex justify-center">
-             <div className="flex space-x-1.5 opacity-50">
-               <div className={`w-1.5 h-1.5 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-400'}`}></div>
-               <div className={`w-1.5 h-1.5 rounded-full ${isDark ? 'bg-blue-500' : 'bg-[#003B95]'}`}></div>
-               <div className={`w-1.5 h-1.5 rounded-full ${isDark ? 'bg-slate-600' : 'bg-gray-400'}`}></div>
-             </div>
-          </div>
-        </div>
-        
-        <div className={`absolute bottom-8 flex flex-col items-center justify-center gap-1 opacity-50`}>
-          <Shield size={24} className={isDark ? 'text-slate-600' : 'text-gray-400'} />
-          <span className={`text-[10px] font-bold tracking-widest uppercase ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
-            Corpo de Bombeiros Militar do Paraná
-          </span>
-        </div>
-      </div>
-    );
-  }
+  // (Login view removed for forced anonymous access)
+
 
   return (
     <div className={`flex flex-col lg:flex-row h-screen font-sans antialiased overflow-hidden ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-gray-50 text-gray-900'}`}>
