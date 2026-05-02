@@ -17,6 +17,10 @@ service cloud.firestore {
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.email == 'lorranogab@gmail.com' || request.auth.token.email == 'cbmpr.leilao@gmail.com');
+    }
+
     // 2. Schema Validation Helpers
     function isValidVehicle(data) {
       return data.keys().hasAll(['placa', 'modelo', 'uploadedAt', 'uploadedBy'])
@@ -30,7 +34,7 @@ service cloud.firestore {
         && (!('ano' in data) || (data.ano is string && data.ano.size() <= 32))
         && (!('patrimonio' in data) || (data.patrimonio is string && data.patrimonio.size() <= 128))
         && (!('id' in data) || (data.id is string && data.id.size() <= 128))
-        && data.uploadedBy == request.auth.uid;
+        && (data.uploadedBy == request.auth.uid || isAdmin());
     }
 
     function isValidInspection(data) {
@@ -41,27 +45,27 @@ service cloud.firestore {
         && data.class is string && data.class.size() <= 100
         && data.data is string && data.data.size() <= 64
         && data.fullData is map
-        && data.inspectedBy == request.auth.uid;
+        && (data.inspectedBy == request.auth.uid || isAdmin());
     }
 
     // 3. Collection Rules
     match /vehicles/{vehicleId} {
-      allow get: if isSignedIn() && isValidId(vehicleId) && resource.data.uploadedBy == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.uploadedBy == request.auth.uid; 
+      allow get: if isSignedIn() && isValidId(vehicleId) && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid); 
       
       allow create: if isSignedIn() 
                     && isValidId(vehicleId)
                     && isValidVehicle(incoming())
                     && incoming().uploadedAt == request.time;
                     
-      allow update: if false; // Vehicles are uploaded in bulk and not updated through the UI currently
+      allow update: if isAdmin(); // Admins can fix data if needed
       
-      allow delete: if isSignedIn() && isValidId(vehicleId) && (resource == null || resource.data.uploadedBy == request.auth.uid);
+      allow delete: if isSignedIn() && isValidId(vehicleId) && (resource == null || isAdmin() || resource.data.uploadedBy == request.auth.uid);
     }
 
     match /inspections/{inspectionId} {
-      allow get: if isSignedIn() && isValidId(inspectionId) && resource.data.inspectedBy == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.inspectedBy == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(inspectionId) && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
       
       allow create: if isSignedIn()
                     && isValidId(inspectionId)
@@ -72,14 +76,14 @@ service cloud.firestore {
                       isSignedIn()
                       && isValidId(inspectionId)
                       && isValidInspection(incoming())
-                      && incoming().inspectedBy == existing().inspectedBy
+                      && (isAdmin() || incoming().inspectedBy == existing().inspectedBy)
                       && incoming().diff(existing()).affectedKeys().hasOnly([
                         'placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'
                       ])
                       && incoming().inspectedAt == request.time
                     );
                     
-      allow delete: if isSignedIn() && isValidId(inspectionId) && (resource == null || resource.data.inspectedBy == request.auth.uid);
+      allow delete: if isSignedIn() && isValidId(inspectionId) && (resource == null || isAdmin() || resource.data.inspectedBy == request.auth.uid);
     }
   }
 }

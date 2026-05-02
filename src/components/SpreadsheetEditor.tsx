@@ -60,12 +60,7 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
     municipio: ''
   });
 
-  const [data, setData] = useState<Vehicle[]>([]);
-
-  // Initialize with one row on mount
-  React.useEffect(() => {
-    setData([createEmptyRow()]);
-  }, []);
+  const [data, setData] = useState<Vehicle[]>(() => [createEmptyRow()]);
 
   // We don't watch frota changes because this editor is purely for inserting NEW vehicles.
   // The 'frota' prop is only used to pull one example vehicle for demonstration.

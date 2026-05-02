@@ -18,7 +18,8 @@ import {
   ChevronRight, ChevronLeft, Shield, Home,
   Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap,
-  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table
+  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table,
+  Menu, X
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
@@ -549,6 +550,7 @@ const DashboardSummary = ({ frota, inspectedResults, isDark }: { frota: any[], i
 
 interface Vehicle {
   id: string;
+  _ord?: any;
   orgao?: string;
   placa: string;
   modelo: string;
@@ -568,6 +570,9 @@ interface Vehicle {
   situacaoDetran?: string;
   endereco_patio?: string;
   municipio: string;
+  uploadedAt?: any;
+  uploadedBy?: string;
+  uploadedByEmail?: string;
   endereco?: {
     rua: string;
     bairro: string;
@@ -624,25 +629,53 @@ const App = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
+  const [uploaderFilter, setUploaderFilter] = useState<string>('todos');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (isMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isMenuOpen]);
   const [authPassword, setAuthPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
+  const ADMIN_EMAILS = ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com'];
+  const isAdminMaster = ADMIN_EMAILS.includes(user?.email || '') || ADMIN_EMAILS.includes(auth.currentUser?.email || '');
 
-  const fetchInitialData = async (uid?: string) => {
-    const currentUid = uid || user?.uid;
-    if (!currentUid) return;
+  const fetchInitialData = async (uid?: string, email?: string) => {
+    const currentUid = uid || auth.currentUser?.uid || user?.uid;
+    if (!currentUid) {
+      console.log("No current UID found for fetchInitialData");
+      return;
+    }
+    
+    const currentUserEmail = email || auth.currentUser?.email || user?.email;
+    const isActuallyAdmin = ADMIN_EMAILS.includes(currentUserEmail || '');
+    
     try {
       // Fetch vehicles
-      const vQuery = query(collection(db, "vehicles"), where("uploadedBy", "==", currentUid));
+      const vQuery = isActuallyAdmin 
+        ? query(collection(db, "vehicles"))
+        : query(collection(db, "vehicles"), where("uploadedBy", "==", currentUid));
+      
       const vSnap = await getDocs(vQuery);
       const vData = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
       vData.sort((a: any, b: any) => (b.uploadedAt?.toMillis() || 0) - (a.uploadedAt?.toMillis() || 0));
       setFrota(vData);
 
       // Fetch inspections
-      const iQuery = query(collection(db, "inspections"), where("inspectedBy", "==", currentUid));
+      const iQuery = isActuallyAdmin
+        ? query(collection(db, "inspections"))
+        : query(collection(db, "inspections"), where("inspectedBy", "==", currentUid));
+        
       const iSnap = await getDocs(iQuery);
       const iData = iSnap.docs.map(d => ({ ...d.data(), id: d.id } as Inspection));
       iData.sort((a: any, b: any) => (b.inspectedAt?.toMillis() || 0) - (a.inspectedAt?.toMillis() || 0));
@@ -678,7 +711,7 @@ const App = () => {
       setUser(u);
       setAuthReady(true);
       if (u) {
-        fetchInitialData(u.uid);
+        fetchInitialData(u.uid, u.email || undefined);
       }
     });
     return () => unsubscribe();
@@ -769,7 +802,8 @@ const App = () => {
           ...rest,
           fipe: numericFipe,
           uploadedAt: serverTimestamp(),
-          uploadedBy: user?.uid
+          uploadedBy: user?.uid,
+          uploadedByEmail: user?.email || 'unknown'
         });
         queueOp();
         addedCount++;
@@ -810,6 +844,11 @@ const App = () => {
     const isVistoriado = evaluatedPlacaSet.has(v.placa);
     if (statusFilter === 'vistoriados' && !isVistoriado) return false;
     if (statusFilter === 'pendentes' && isVistoriado) return false;
+
+    if (uploaderFilter !== 'todos') {
+      const uploader = v.uploadedByEmail || 'Desconhecido';
+      if (uploader !== uploaderFilter) return false;
+    }
 
     return true;
   }).sort((a, b) => {
@@ -1175,7 +1214,8 @@ const App = () => {
                     batch.set(newDocRef, {
                       ...rest,
                       uploadedAt: serverTimestamp(),
-                      uploadedBy: user!.uid
+                      uploadedBy: user!.uid,
+                      uploadedByEmail: user!.email || 'unknown'
                     });
                   }
                   await batch.commit();
@@ -1362,7 +1402,8 @@ const App = () => {
         data: laudoData.date,
         fullData: laudoData,
         inspectedAt: serverTimestamp(),
-        inspectedBy: user!.uid
+        inspectedBy: user!.uid,
+        inspectedByEmail: user!.email || 'unknown'
       };
 
       if (laudoData.id && typeof laudoData.id === 'string') {
@@ -1607,53 +1648,109 @@ const App = () => {
         </div>
       )}
 
-      {/* NAVEGAÇÃO RESPONSIVA (SIDEBAR NO DESKTOP / NAVBAR NO MOBILE) */}
-      <aside className={`w-full lg:w-64 lg:h-full flex lg:flex-col border-t lg:border-t-0 lg:border-r transition-all duration-300 z-50 order-2 lg:order-1 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-sm'}`}>
-        <div className="hidden lg:block h-6"></div>
-        <nav className="flex-1 flex lg:flex-col items-center lg:items-stretch lg:px-4 lg:py-6 justify-around lg:justify-start lg:space-y-2">
-          <button onClick={() => setActiveTab('inicio')} className={`flex items-center space-x-0 lg:space-x-3 p-3 lg:px-4 lg:py-2.5 rounded-lg transition-colors ${activeTab === 'inicio' ? (isDark ? 'bg-slate-800 text-white' : 'bg-blue-50 text-blue-700 font-semibold') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-50')}`}>
-            <Activity size={18} />
-            <span className="hidden lg:block text-sm">Início</span>
+      {/* OVERLAY MOBILE */}
+      {isMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm z-[110] lg:hidden animate-in fade-in duration-300"
+          onClick={() => setIsMenuOpen(false)}
+        />
+      )}
+
+      {/* NAVEGAÇÃO RESPONSIVA (SIDEBAR NO DESKTOP / DRAWER NO MOBILE) */}
+      <aside className={`fixed lg:static inset-y-0 left-0 w-72 lg:w-64 h-full flex flex-col border-r transition-transform duration-300 z-[120] lg:translate-x-0 ${isMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-xl lg:shadow-none'}`}>
+        <div className="p-6 flex items-center justify-between lg:hidden border-b border-gray-100 dark:border-slate-800 mb-2">
+           <div className="flex items-center space-x-3">
+              <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-amber-500' : 'bg-[#003B95] text-white'}`}>
+                 <Eye size={18} strokeWidth={2.5} />
+              </div>
+              <span className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>ARGOS</span>
+           </div>
+           <button onClick={() => setIsMenuOpen(false)} className={`p-2 rounded-lg ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}>
+              <X size={20} />
+           </button>
+        </div>
+
+        <div className="hidden lg:block h-8"></div>
+        
+        <nav className="flex-1 flex flex-col p-4 space-y-1.5">
+          <button 
+            onClick={() => { setActiveTab('inicio'); setIsMenuOpen(false); }} 
+            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'inicio' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+          >
+            <Activity size={20} />
+            <span className="text-sm">Início</span>
           </button>
-          <button onClick={() => setActiveTab('planilha')} className={`flex items-center space-x-0 lg:space-x-3 p-3 lg:px-4 lg:py-2.5 rounded-lg transition-colors ${activeTab === 'planilha' ? (isDark ? 'bg-slate-800 text-white' : 'bg-blue-50 text-blue-700 font-semibold') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-50')}`}>
-            <Table size={18} />
-            <span className="hidden lg:block text-sm">Cadastro de Veículos</span>
+          
+          <button 
+            onClick={() => { setActiveTab('planilha'); setIsMenuOpen(false); }} 
+            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'planilha' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+          >
+            <Table size={20} />
+            <span className="text-sm text-left">Cadastro de Veículos</span>
           </button>
-          <button onClick={() => setActiveTab('selecao')} className={`flex items-center space-x-0 lg:space-x-3 p-3 lg:px-4 lg:py-2.5 rounded-lg transition-colors ${activeTab === 'selecao' ? (isDark ? 'bg-slate-800 text-white' : 'bg-blue-50 text-blue-700 font-semibold') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-50')}`}>
-            <Database size={18} />
-            <span className="hidden lg:block text-sm">Veículos em pátio</span>
+          
+          <button 
+            onClick={() => { setActiveTab('selecao'); setIsMenuOpen(false); }} 
+            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'selecao' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+          >
+            <Database size={20} />
+            <span className="text-sm text-left">Veículos em Pátio</span>
           </button>
-          <button onClick={() => setActiveTab('dashboard')} className={`flex items-center space-x-0 lg:space-x-3 p-3 lg:px-4 lg:py-2.5 rounded-lg transition-colors ${activeTab === 'dashboard' ? (isDark ? 'bg-slate-800 text-white' : 'bg-blue-50 text-blue-700 font-semibold') : (isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-50')}`}>
-            <LayoutDashboard size={18} />
-            <span className="hidden lg:block text-sm">Gestão de Laudos</span>
+          
+          <button 
+            onClick={() => { setActiveTab('dashboard'); setIsMenuOpen(false); }} 
+            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+          >
+            <LayoutDashboard size={20} />
+            <span className="text-sm text-left">Gestão de Laudos</span>
           </button>
 
-          <div className="pt-6 mt-auto lg:border-t lg:border-gray-200 dark:lg:border-slate-800 flex flex-col space-y-2 px-2 pb-4">
-             <div className="hidden lg:flex items-center space-x-3 mb-2">
-                {user?.photoURL ? <img src={user?.photoURL} alt="User" className="w-8 h-8 rounded-full border border-gray-200" /> : <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center"><span className="font-bold text-xs">{user?.email?.[0]?.toUpperCase()}</span></div>}
-                <div className="overflow-hidden">
-                   <p className={`text-sm font-semibold truncate ${isDark ? 'text-slate-200' : 'text-gray-800'}`}>{user?.displayName}</p>
-                   <p className={`text-xs truncate ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>{user?.email}</p>
+          <div className="pt-8 mt-auto flex flex-col space-y-4">
+             <div className="px-3 py-4 rounded-2xl bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800/60">
+                <div className="flex items-center space-x-3 mb-2">
+                   {user?.photoURL ? (
+                     <img src={user.photoURL} alt="User" referrerPolicy="no-referrer" className="w-10 h-10 rounded-xl border-2 border-white dark:border-slate-700 shadow-sm" />
+                   ) : (
+                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md">
+                        <span className="font-black text-sm">{user?.email?.[0]?.toUpperCase()}</span>
+                     </div>
+                   )}
+                   <div className="min-w-0 flex-1">
+                      <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{user?.displayName || 'Usuário'}</p>
+                      <p className={`text-[10px] uppercase tracking-tighter opacity-60 truncate ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{user?.email}</p>
+                   </div>
                 </div>
+                <button 
+                  onClick={logout} 
+                  className={`w-full flex items-center justify-center space-x-2 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-xs font-bold uppercase tracking-widest mt-2`}
+                >
+                   <LogOut size={16} />
+                   <span>Sair da Conta</span>
+                </button>
              </div>
-             <button onClick={logout} className="flex items-center justify-center lg:justify-start space-x-3 p-3 lg:px-4 lg:py-2 rounded-lg text-red-600 hover:bg-red-50 transition-colors">
-                <LogOut size={18} />
-                <span className="hidden lg:block text-sm font-semibold">Sair</span>
-             </button>
           </div>
         </nav>
       </aside>
 
-      <main id="main-scroll-container" className="flex-1 overflow-y-auto relative order-1 lg:order-2">
+      <main id="main-scroll-container" className="flex-1 overflow-y-auto relative">
         {/* TOP UTILITY BAR (STICKY) */}
-        <div className={`sticky top-0 z-50 flex items-center justify-between px-4 py-4 md:px-8 md:py-6 lg:px-12 lg:py-6 backdrop-blur-xl transition-colors ${isDark ? 'bg-slate-950/80 border-b border-slate-800/50' : 'bg-gray-50/80 border-b border-gray-200/50'}`}>
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
-            <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-[#003B95] text-white border-[#002868] border-b-amber-400'}`}>
-               <Eye size={24} strokeWidth={2.5} />
-            </div>
-            <div className="flex flex-col">
-              <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>ARGOS</span>
-              <span className={`text-xs lg:text-xs font-bold tracking-[0.2em] uppercase ${isDark ? 'text-amber-500' : 'text-[#003B95]'}`}>Avaliação automatizada</span>
+        <div className={`sticky top-0 z-[60] flex items-center justify-between px-4 py-4 md:px-8 md:py-6 lg:px-12 lg:py-6 backdrop-blur-xl transition-colors ${isDark ? 'bg-slate-950/80 border-b border-slate-800/50' : 'bg-gray-50/80 border-b border-gray-200/50'}`}>
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setIsMenuOpen(true)}
+              className={`lg:hidden p-2 pr-3 rounded-lg transition-colors flex items-center space-x-2 ${isDark ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 uppercase text-[10px] font-bold tracking-widest'}`}
+            >
+              <Menu size={20} />
+              <span className="text-[10px] font-black tracking-tighter">MENU</span>
+            </button>
+            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
+              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-[#003B95] text-white border-[#002868] border-b-amber-400'}`}>
+                <Eye size={24} strokeWidth={2.5} />
+              </div>
+              <div className="flex flex-col">
+                <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>ARGOS</span>
+                <span className={`text-xs lg:text-xs font-bold tracking-[0.2em] uppercase ${isDark ? 'text-amber-500' : 'text-[#003B95]'}`}>Avaliação automatizada</span>
+              </div>
             </div>
           </div>
 
@@ -1815,6 +1912,35 @@ const App = () => {
                    <button onClick={() => setStatusFilter('todos')} className={`px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors ${statusFilter === 'todos' ? (isDark ? 'bg-blue-900 border-blue-800 text-blue-200' : 'bg-[#003B95] border-[#003B95] text-white') : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50')}`}>Todos</button>
                    <button onClick={() => setStatusFilter('vistoriados')} className={`px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors ${statusFilter === 'vistoriados' ? (isDark ? 'bg-emerald-900 border-emerald-800 text-emerald-200' : 'bg-emerald-600 border-emerald-600 text-white') : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50')}`}>Vistoriados</button>
                    <button onClick={() => setStatusFilter('pendentes')} className={`px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors ${statusFilter === 'pendentes' ? (isDark ? 'bg-amber-900 border-amber-800 text-amber-200' : 'bg-amber-500 border-amber-500 text-white') : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50')}`}>Pendentes</button>
+
+                   {isAdminMaster && (
+                     <div className="flex items-center gap-2 ml-auto">
+                        <Users size={14} className={isDark ? 'text-gray-400' : 'text-gray-500'} />
+                        <select 
+                          value={uploaderFilter} 
+                          onChange={(e) => setUploaderFilter(e.target.value)}
+                          className={`text-xs px-2 py-1 rounded border ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-300'}`}
+                        >
+                          <option value="todos">Todos os Uploaders</option>
+                          {Array.from(new Set(frota.map(v => v.uploadedByEmail || 'Desconhecido'))).map(email => (
+                            <option key={email} value={email}>{email}</option>
+                          ))}
+                        </select>
+                        {uploaderFilter !== 'todos' && (
+                          <button 
+                            onClick={() => {
+                              const idsToDelete = frota.filter(v => (v.uploadedByEmail || 'Desconhecido') === uploaderFilter).map(v => v.id);
+                              setSelectedVehicles(idsToDelete);
+                              setIsDeleteMode(true);
+                              setShowBulkDeleteConfirm(true);
+                            }}
+                            className="text-[10px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 transition-colors uppercase font-bold"
+                          >
+                            Excluir Tudo do Usuário
+                          </button>
+                        )}
+                     </div>
+                   )}
                  </div>
               )}
             </header>
@@ -1868,6 +1994,15 @@ const App = () => {
                           <span className="font-semibold text-gray-700 dark:text-gray-300">{v.modelo}</span>
                           <span className="opacity-50">•</span>
                           <span>{v.municipio}</span>
+                          {isAdminMaster && (
+                            <>
+                              <span className="opacity-50">•</span>
+                              <span className={`flex items-center gap-1 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                                <Users size={10} />
+                                {v.uploadedByEmail || 'Desconhecido'}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2490,14 +2625,17 @@ const App = () => {
                     </div>
                     
                     <div className="grid grid-cols-3 gap-2 w-full mt-auto">
-                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(true); setActiveTab('mimico'); }} className={`p-2.5 rounded-xl border transition-all flex items-center justify-center ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Visualizar">
+                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(true); setActiveTab('mimico'); }} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Visualizar">
                           <Eye size={18} />
+                          <span className="text-[9px] font-bold mt-1 uppercase">Ver</span>
                        </button>
-                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setActiveTab('mimico'); }} className={`p-2.5 rounded-xl border transition-all flex items-center justify-center ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
+                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setActiveTab('mimico'); }} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
                           <Pencil size={18} />
+                          <span className="text-[9px] font-bold mt-1 uppercase">Editar</span>
                        </button>
-                       <button onClick={() => deleteLaudo(r.id)} className={`p-2.5 rounded-xl border transition-all flex items-center justify-center ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100 hover:text-red-600'}`} title="Excluir">
+                       <button onClick={() => deleteLaudo(r.id)} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100 hover:text-red-600'}`} title="Excluir">
                           <Trash2 size={18} />
+                          <span className="text-[9px] font-bold mt-1 uppercase">Excluir</span>
                        </button>
                     </div>
                  </div>
