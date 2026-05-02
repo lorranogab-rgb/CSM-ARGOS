@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Information about a vehicle in the fleet.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "placa": { "type": "string" },
+        "modelo": { "type": "string" },
+        "fipe": { "type": "number" },
+        "chassi": { "type": "string" },
+        "motor": { "type": "string" },
+        "municipio": { "type": "string" },
+        "cor": { "type": "string" },
+        "ano": { "type": "string" },
+        "patrimonio": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" },
+        "uploadedBy": { "type": "string" }
+      },
+      "required": ["placa", "modelo", "chassi"]
+    },
+    "Inspection": {
+      "title": "Inspection",
+      "description": "Technical inspection (laudo) results for a vehicle.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "data": { "type": "string" },
+        "classification": { "type": "string" },
+        "vehicle": { "type": "object" },
+        "agency": { "type": "object" },
+        "scores": { "type": "object" },
+        "checklist": { "type": "object" },
+        "diagnostics": { "type": "object" },
+        "description": { "type": "string" },
+        "chassisPhoto": { "type": "string" },
+        "motorPhoto": { "type": "string" },
+        "nota": { "type": "number" },
+        "inspectedBy": { "type": "string" },
+        "inspectedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Fleet vehicles collection."
+    },
+    "/inspections/{inspectionId}": {
+      "schema": "Inspection",
+      "description": "Vehicle inspections collection."
+    }
+  }
+}

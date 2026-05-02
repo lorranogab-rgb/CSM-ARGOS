@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Core Primitives
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // 2. Schema Validation Helpers
+    function isValidVehicle(data) {
+      return data.keys().hasAll(['placa', 'modelo', 'uploadedAt', 'uploadedBy'])
+        && data.placa is string && data.placa.size() <= 64
+        && data.modelo is string && data.modelo.size() <= 200
+        && (!('fipe' in data) || data.fipe is number || (data.fipe is string && data.fipe.size() <= 64))
+        && (!('chassi' in data) || (data.chassi is string && data.chassi.size() <= 128))
+        && (!('motor' in data) || (data.motor is string && data.motor.size() <= 128))
+        && (!('municipio' in data) || (data.municipio is string && data.municipio.size() <= 128))
+        && (!('cor' in data) || (data.cor is string && data.cor.size() <= 64))
+        && (!('ano' in data) || (data.ano is string && data.ano.size() <= 32))
+        && (!('patrimonio' in data) || (data.patrimonio is string && data.patrimonio.size() <= 128))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && data.uploadedBy == request.auth.uid;
+    }
+
+    function isValidInspection(data) {
+      return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'])
+        && data.placa is string && data.placa.size() <= 64
+        && data.modelo is string && data.modelo.size() <= 200
+        && data.nota is number
+        && data.class is string && data.class.size() <= 100
+        && data.data is string && data.data.size() <= 64
+        && data.fullData is map
+        && data.inspectedBy == request.auth.uid;
+    }
+
+    // 3. Collection Rules
+    match /vehicles/{vehicleId} {
+      allow get: if isSignedIn() && isValidId(vehicleId) && resource.data.uploadedBy == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.uploadedBy == request.auth.uid; 
+      
+      allow create: if isSignedIn() 
+                    && isValidId(vehicleId)
+                    && isValidVehicle(incoming())
+                    && incoming().uploadedAt == request.time;
+                    
+      allow update: if false; // Vehicles are uploaded in bulk and not updated through the UI currently
+      
+      allow delete: if isSignedIn() && isValidId(vehicleId) && (resource == null || resource.data.uploadedBy == request.auth.uid);
+    }
+
+    match /inspections/{inspectionId} {
+      allow get: if isSignedIn() && isValidId(inspectionId) && resource.data.inspectedBy == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.inspectedBy == request.auth.uid;
+      
+      allow create: if isSignedIn()
+                    && isValidId(inspectionId)
+                    && isValidInspection(incoming())
+                    && incoming().inspectedAt == request.time;
+                    
+      allow update: if (
+                      isSignedIn()
+                      && isValidId(inspectionId)
+                      && isValidInspection(incoming())
+                      && incoming().inspectedBy == existing().inspectedBy
+                      && incoming().diff(existing()).affectedKeys().hasOnly([
+                        'placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'
+                      ])
+                      && incoming().inspectedAt == request.time
+                    );
+                    
+      allow delete: if isSignedIn() && isValidId(inspectionId) && (resource == null || resource.data.inspectedBy == request.auth.uid);
+    }
+  }
+}

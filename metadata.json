@@ -1,0 +1,8 @@
+{
+  "name": "CSM-ARGOS",
+  "description": "Sistema ARGOS de gestão e vistorias de frotas. Supervisão total, laudos técnicos, checklists 360° e controle de alienação de bens.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
