@@ -18,13 +18,13 @@ import {
   ChevronRight, ChevronLeft, Shield, Home,
   Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap,
-  Disc, Armchair, Tag, AlertTriangle, ArrowUpDown, Table
+  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
 } from 'recharts';
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from './lib/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User, signInAnonymously } from 'firebase/auth';
+import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, where, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- CONSTANTES GLOBAIS ---
@@ -623,6 +623,10 @@ const App = () => {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
 
@@ -670,31 +674,51 @@ const App = () => {
   }, [activeTab, page, wizPhase, wizStep, wizSubPhase]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
+      setAuthReady(true);
       if (u) {
-        setAuthReady(true);
         fetchInitialData(u.uid);
-      } else {
-        try {
-          await signInAnonymously(auth);
-        } catch (error) {
-          console.error("Erro no login anônimo", error);
-          setUser({ uid: 'convidado', email: 'convidado@local', displayName: 'Convidado' } as any);
-          fetchInitialData('convidado');
-          setAuthReady(true); // Fallback so it doesn't hang forever
-        }
       }
     });
     return () => unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const login = async () => {
+  const loginWithGoogle = async () => {
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (e) {
-      console.error("Login component error:", e);
+    } catch (e: any) {
+      console.error(e);
+      setAuthError("Erro na autenticação com Google.");
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    try {
+      if (isSignUp) {
+        await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+      } else {
+        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+      }
+    } catch (e: any) {
+      console.error(e);
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+        setAuthError("E-mail ou senha incorretos.");
+      } else if (e.code === 'auth/email-already-in-use') {
+        setAuthError("Este e-mail já está em uso.");
+      } else if (e.code === 'auth/weak-password') {
+        setAuthError("A senha deve ter pelo menos 6 caracteres.");
+      } else if (e.code === 'auth/invalid-email') {
+        setAuthError("E-mail inválido.");
+      } else if (e.code === 'auth/operation-not-allowed') {
+        setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console.");
+      } else {
+        setAuthError("Erro na autenticação: " + e.message);
+      }
     }
   };
 
@@ -791,7 +815,7 @@ const App = () => {
   }).sort((a, b) => {
     if (!sortField) return 0;
     
-    let comparison = 0;
+    let comparison: number;
     if (sortField === 'ano') {
       const yearA = parseInt(a.ano as string) || 0;
       const yearB = parseInt(b.ano as string) || 0;
@@ -1375,7 +1399,98 @@ const App = () => {
     );
   }
 
-  // (Login view removed for forced anonymous access)
+  if (!user) {
+    return (
+      <div className={`flex flex-col items-center justify-center min-h-screen p-8 text-center relative overflow-hidden ${isDark ? 'bg-slate-950 text-white' : 'bg-slate-50 text-gray-900'}`}>
+        {/* Background Decorative Elements */}
+        <div className={`absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b ${isDark ? 'from-blue-900/20 to-transparent' : 'from-[#003B95]/10 to-transparent'} pointer-events-none`} />
+        
+        <div className={`relative z-10 w-full max-w-md p-10 rounded-3xl shadow-2xl border ${isDark ? 'bg-slate-900/80 backdrop-blur-xl border-slate-800 shadow-black/50' : 'bg-white/80 backdrop-blur-xl border-gray-200 shadow-blue-900/5'}`}>
+          <div className="flex justify-center mb-6">
+            <div className={`w-20 h-20 rounded-2xl flex flex-col items-center justify-center shadow-inner border ${isDark ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-white to-gray-50 border-gray-200'}`}>
+              <Eye size={36} className={`mb-1 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`} />
+              <span className={`text-[10px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Argos</span>
+            </div>
+          </div>
+          
+          <h1 className="text-3xl font-black tracking-tighter mb-2">SISTEMA ARGOS</h1>
+          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}>Controle de Frota Operacional</h2>
+          
+          <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
+            <div>
+              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
+              <input 
+                type="email" 
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoComplete="email"
+                required
+                className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
+                placeholder="seu@email.com"
+              />
+            </div>
+            <div>
+              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Senha</label>
+              <input 
+                type="password" 
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+                className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
+                placeholder="••••••••"
+              />
+            </div>
+
+            {authError && (
+              <div className="p-3 rounded-lg bg-red-100 text-red-600 text-xs font-semibold flex items-center space-x-2">
+                <AlertCircle size={14} />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <button 
+              type="submit"
+              className={`w-full py-4 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px]`}
+            >
+              {isSignUp ? 'Criar Conta' : 'Entrar'}
+            </button>
+          </form>
+
+          <div className="flex items-center space-x-2 my-6">
+            <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Ou</span>
+            <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
+          </div>
+
+          <button 
+            type="button"
+            onClick={loginWithGoogle}
+            className={`w-full py-3.5 rounded-xl font-bold transition-all border flex items-center justify-center space-x-3 duration-300 ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white' : 'bg-white hover:bg-gray-50 border-gray-200 text-gray-700'}`}
+          >
+            <LogIn size={18} />
+            <span>Entrar com Google</span>
+          </button>
+          
+          <div className="mt-8">
+            <button 
+              onClick={() => setIsSignUp(!isSignUp)}
+              className={`text-sm font-bold ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-[#003B95] hover:text-blue-800'}`}
+            >
+              {isSignUp ? 'Já tem uma conta? Entre aqui' : 'Não tem conta? Cadastre-se'}
+            </button>
+          </div>
+        </div>
+        
+        <div className={`mt-12 flex flex-col items-center justify-center gap-1 opacity-50`}>
+          <Shield size={24} className={isDark ? 'text-slate-600' : 'text-gray-400'} />
+          <span className={`text-[10px] font-bold tracking-widest uppercase ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
+            Corpo de Bombeiros Militar do Paraná
+          </span>
+        </div>
+      </div>
+    );
+  }
 
 
   return (

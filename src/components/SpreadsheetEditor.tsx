@@ -36,9 +36,9 @@ interface SpreadsheetEditorProps {
   isDark: boolean;
 }
 
-export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ frota, onSave, isDark }) => {
+export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, isDark }) => {
   const createEmptyRow = (): Vehicle => ({
-    id: 'new-' + Math.random().toString(36).substr(2, 9),
+    id: 'new-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
     orgao: '',
     placa: '',
     modelo: '',
@@ -60,7 +60,12 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ frota, onS
     municipio: ''
   });
 
-  const [data, setData] = useState<Vehicle[]>([createEmptyRow()]);
+  const [data, setData] = useState<Vehicle[]>([]);
+
+  // Initialize with one row on mount
+  React.useEffect(() => {
+    setData([createEmptyRow()]);
+  }, []);
 
   // We don't watch frota changes because this editor is purely for inserting NEW vehicles.
   // The 'frota' prop is only used to pull one example vehicle for demonstration.
@@ -73,7 +78,7 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ frota, onS
     setData(data.filter(v => v.id !== id));
   };
 
-  const handleChange = (id: string, field: keyof Vehicle, value: string | any) => {
+  const handleChange = (id: string, field: keyof Vehicle, value: string) => {
     setData(data.map(v => {
       if (v.id === id) {
         let formattedValue = value;
@@ -82,11 +87,11 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ frota, onS
         } else if (field === 'patrimonio' || field === 'renavam') {
           formattedValue = String(value).replace(/[^0-9]/g, '');
         } else if (field === 'ano') {
-          let v = String(value).replace(/[^0-9]/g, '');
-          if (v.length > 2) {
-             formattedValue = v.slice(0, 2) + '/' + v.slice(2, 4);
+          const val = String(value).replace(/[^0-9]/g, '');
+          if (val.length > 2) {
+             formattedValue = val.slice(0, 2) + '/' + val.slice(2, 4);
           } else {
-             formattedValue = v;
+             formattedValue = val;
           }
         }
         return { ...v, [field]: formattedValue };
