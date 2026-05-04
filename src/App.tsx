@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import { toJpeg } from 'html-to-image';
@@ -17,12 +17,13 @@ import {
   Search, CheckCircle,
   ChevronRight, ChevronLeft, Shield, Home,
   Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
-  Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap,
+  Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
   Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table,
-  Menu, X
+  X, BarChart2, LayoutGrid
 } from 'lucide-react';
 import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
@@ -121,6 +122,59 @@ const CHECKLIST_WIZARD_STRUCTURE = {
   "LATERAIS E TRASEIRA": ["Farol Diant. E", "Para-Lamas Diant. E", "Roda Diant. E", "Caixa de Direção", "Retrovisor E", "Retrovisor D", "Porta Dianteira E", "Porta Traseira E", "Porta Dianteira D", "Porta Traseira D", "Vidros Laterais E", "Vidros Laterais D", "Roda Tras. E", "Roda Tras. D", "Para-Lamas Tras. E", "Para-Lamas Tras. D", "Lanterna Tras. E.", "Lanterna Tras. D.", "Para-chq Tras.", "Tampa Porta Malas", "Vidro Traseiro"],
   "INTERIOR": ["Bancos Diant. E", "Bancos Diant. D", "Volante", "Air-Bag", "Painel de Inst.", "Alavanca Câmbio", "Bancos Tras.", "Estepe"]
 };
+
+const CHECKLIST_PROBLEMS = {
+  // EXTERNA
+  "Vidro Para Brisa": ["Trincado", "Riscado", "Manchado", "Faltando", "Picado de Pedra"],
+  "Capô": ["Amassado", "Riscado", "Desalinhado", "Sem Pintura", "Batido"],
+  "Para-chq Dian.": ["Desencaixado", "Quebrado", "Riscado", "Faltando Presilhas", "Amassado"],
+  "Farol Diant. D": ["Quebrado", "Fosco", "Entrada de Água", "Lâmpada Queimada", "Trincado"],
+  "Farol Diant. E": ["Quebrado", "Fosco", "Entrada de Água", "Lâmpada Queimada", "Trincado"],
+  "Retrovisor E": ["Quebrado", "Sem Espelho", "Frouxo", "Sem Pintura"],
+  "Retrovisor D": ["Quebrado", "Sem Espelho", "Frouxo", "Sem Pintura"],
+  "Teto": ["Amassado", "Granizo", "Riscado", "Pintura Queimada"],
+  "Lanterna Tr. D": ["Quebrada", "Infiltrada", "Queimada", "Frouxa"],
+  "Lanterna Tr. E": ["Quebrada", "Infiltrada", "Queimada", "Frouxa"],
+  "Para-chq Tras.": ["Amassado", "Solto", "Riscado", "Quebrado", "Desalinhado"],
+  "Tampa Porta Malas": ["Amassado", "Não Abre", "Sem Chave", "Riscado"],
+  "Vidro Traseiro": ["Trincado", "Desembaçador Ruim", "Faltando", "Grave"],
+  "Para-Lamas Diant. D": ["Amassado", "Riscado", "Desalinhado"],
+  "Para-Lamas Diant. E": ["Amassado", "Riscado", "Desalinhado"],
+  "Para-Lamas Tras. D": ["Amassado", "Riscado", "Desalinhado"],
+  "Para-Lamas Tras. E": ["Amassado", "Riscado", "Desalinhado"],
+  "Roda Diant. D": ["Riscada", "Amassada", "Pneu Gasto", "Falta Calota"],
+  "Roda Diant. E": ["Riscada", "Amassada", "Pneu Gasto", "Falta Calota"],
+  "Roda Tras. D": ["Riscada", "Amassada", "Pneu Gasto", "Falta Calota"],
+  "Roda Tras. E": ["Riscada", "Amassada", "Pneu Gasto", "Falta Calota"],
+  "Porta Dianteira D": ["Amassado", "Riscado", "Batida de Porta", "Maçaneta Ruim"],
+  "Porta Dianteira E": ["Amassado", "Riscado", "Batida de Porta", "Maçaneta Ruim"],
+  "Porta Traseira D": ["Amassado", "Riscado", "Batida de Porta", "Maçaneta Ruim"],
+  "Porta Traseira E": ["Amassado", "Riscado", "Batida de Porta", "Maçaneta Ruim"],
+  "Vidros Laterais D": ["Trincado", "Riscado", "Película Danificada"],
+  "Vidros Laterais E": ["Trincado", "Riscado", "Película Danificada"],
+  "Radiador": ["Vazamento", "Aletas Amassadas", "Sem Aditivo"],
+  "Caixa de Câmbio": ["Vazamento", "Dificuldade Engate", "Ruído"],
+  "Caixa de Direção": ["Folga", "Vazamento Fluido", "Barulho ao Esterçar"],
+
+  // MECÂNICA
+  "Relé / Fiação": ["Desencapado", "Curto Circuito", "Oxidado", "Sem Terminal"],
+  "Bateria": ["Oxidada", "Sem Carga", "Estufada", "Fora da Validade"],
+  "Motor": ["Vazamento Óleo", "Ruído Estranho", "Aquecimento", "Fumaça Excessiva"],
+  "Embreagem": ["Patina", "Dura", "Trepidando", "Barulho no Rolamento"],
+  "Ar Condic.": ["Não Gela", "Odor Forte", "Barulho no Compressor"],
+  "Freios": ["Disco Gasto", "Pastilha no Fim", "Vazamento Fluido", "Pedal Baixo"],
+  "Suspensão": ["Batendo", "Amortecedor Vazando", "Barulho em Curva", "Pneu Desalinhado"],
+
+  // INTERIOR
+  "Bancos Diant. E": ["Rasgado", "Manchado", "Trilho Travado", "Estrutura Quebrada"],
+  "Bancos Diant. D": ["Rasgado", "Manchado", "Trilho Travado", "Estrutura Quebrada"],
+  "Bancos Tras.": ["Sujeira Profunda", "Rasgos", "Falta Cinto", "Solto"],
+  "Volante": ["Desgastado", "Com Folga", "Torto", "Controles Falhando"],
+  "Air-Bag": ["Acionado", "Luz Acesa", "Tampa Danificada", "Ausente"],
+  "Painel de Inst.": ["Luzes de Erro", "Display Falhando", "Trincado", "Sem Iluminação"],
+  "Alavanca Câmbio": ["Coifa Rasgada", "Manopla Pobre", "Dura", "Escapa Marcha"],
+  "Estepe": ["Careca", "Furado", "Sem Roda", "Ausente", "Modelo Diferente"],
+} as Record<string, string[]>;
 
 const CHECKLIST_KEYS = Object.keys(CHECKLIST_WIZARD_STRUCTURE);
 
@@ -229,7 +283,7 @@ const MimicoFormI = ({ data, update, readOnly }) => {
 
 const ChecklistCol = ({ items, laudoData, update, readOnly }: { items: string[], laudoData: any, update: any, readOnly: boolean }) => (
   <div className="col-span-1 border-r last:border-r-0 border-black text-black">
-    <div className="grid grid-cols-12 bg-gray-200 border-b border-black  font-bold text-center h-4 items-center uppercase"><div className="col-span-6 border-r border-black px-0.5 text-left pl-1 text-black ">DESCRIÇÃO</div><div className="col-span-2 border-r border-black ">S</div><div className="col-span-2 border-r border-black ">N</div><div className="col-span-2 ">D</div></div>
+    <div className="grid grid-cols-12 bg-gray-200 border-b border-black  font-bold text-center h-4 items-center uppercase"><div className="col-span-6 border-r border-black px-0.5 text-left pl-1 text-black ">DESCRIÇÃO</div><div className="col-span-2 border-r border-black ">SIM</div><div className="col-span-2 border-r border-black ">NÃO</div><div className="col-span-2 ">DANIF</div></div>
     {items.map((item, idx) => (
       <div key={idx} className="grid grid-cols-12 border-b border-black last:border-b-0 h-4 items-center ">
         <div className="col-span-6 px-1 truncate font-normal border-r border-black uppercase  leading-tight text-left text-black">{item}</div>
@@ -389,58 +443,125 @@ const PrintPreviewModal = ({ showPreview, laudoData, isDark, setShowPreview, pre
 };
 
 const AnalyticsHeader = ({ inspectedResults, isDark }: { inspectedResults: any[], isDark: boolean }) => {
-  const notas = inspectedResults.map(r => r.nota || 0);
-  const avgNota = notas.length > 0 ? (notas.reduce((a, b) => a + b, 0) / notas.length).toFixed(1) : '0';
+  const [view, setView] = useState<'score' | 'fipe'>('score');
+
+  const scoreData = [
+    { name: 'Péssimos', count: inspectedResults.filter(r => (r.nota || 0) >= 0 && (r.nota || 0) <= 20).length, color: '#ef4444' },
+    { name: 'Ruins', count: inspectedResults.filter(r => (r.nota || 0) > 20 && (r.nota || 0) <= 40).length, color: '#f97316' },
+    { name: 'Regulares', count: inspectedResults.filter(r => (r.nota || 0) > 40 && (r.nota || 0) <= 60).length, color: '#f59e0b' },
+    { name: 'Bons', count: inspectedResults.filter(r => (r.nota || 0) > 60 && (r.nota || 0) <= 80).length, color: '#10b981' },
+    { name: 'Ótimos', count: inspectedResults.filter(r => (r.nota || 0) > 80 && (r.nota || 0) <= 100).length, color: '#059669' },
+  ];
+
+  const fipeData = [
+    { name: '15% FIPE', count: inspectedResults.filter(r => (r.nota || 0) < 41).length, color: '#ef4444' },
+    { name: '25% FIPE', count: inspectedResults.filter(r => (r.nota || 0) >= 41 && (r.nota || 0) <= 60).length, color: '#f16b20' },
+    { name: '35% FIPE', count: inspectedResults.filter(r => (r.nota || 0) >= 61 && (r.nota || 0) <= 90).length, color: '#10b981' },
+    { name: '50% FIPE', count: inspectedResults.filter(r => (r.nota || 0) >= 91).length, color: '#059669' },
+  ];
+
+  const chartData = view === 'score' ? scoreData : fipeData;
+
   const sucataCount = inspectedResults.filter(r => r.class === 'SUCATA' || r.class === 'INSERVÍVEL').length;
   const recuperavelCount = inspectedResults.filter(r => r.class === 'RECUPERÁVEL' || r.class === 'BOM' || r.class === 'REGULAR' || r.class === 'ALB').length;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 mt-4">
-      {/* Bento 1: Score */}
-      <div className={`p-6 rounded-3xl border flex flex-col justify-between shadow-sm relative overflow-hidden group transition-all duration-300 hover:shadow-lg ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 hover:border-blue-100'}`}>
-        <div className="relative z-10">
-          <div className="flex justify-between items-start mb-6">
-            <h3 className={`font-semibold tracking-tight uppercase text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Pontuação Média</h3>
+      {/* Bento 1: Classification Chart - Enlarged */}
+      <div className={`md:col-span-2 p-6 rounded-3xl border flex flex-col justify-between shadow-sm relative overflow-hidden group transition-all duration-300 hover:shadow-lg ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 hover:border-blue-100'}`}>
+        <div className="relative z-10 w-full h-full flex flex-col">
+          <div className="flex justify-between items-start mb-2">
+            <div className="flex flex-col">
+              <h3 className={`font-semibold tracking-tight uppercase text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                {view === 'score' ? 'Distribuição de Pontuação' : 'Avaliação por % FIPE'}
+              </h3>
+              <div className="flex items-center gap-1 mt-1">
+                <button 
+                  onClick={() => setView('score')}
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-colors ${view === 'score' ? (isDark ? 'bg-blue-600 text-white' : 'bg-[#003B95] text-white') : (isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600')}`}
+                >
+                  PONTOS
+                </button>
+                <button 
+                  onClick={() => setView('fipe')}
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-colors ${view === 'fipe' ? (isDark ? 'bg-blue-600 text-white' : 'bg-[#003B95] text-white') : (isDark ? 'text-slate-500 hover:text-slate-300' : 'text-gray-400 hover:text-gray-600')}`}
+                >
+                  % FIPE
+                </button>
+              </div>
+            </div>
             <div className={`p-2 rounded-xl ${isDark ? 'bg-blue-900/30' : 'bg-blue-50'}`}>
               <Activity className={isDark ? 'text-blue-400' : 'text-[#003B95]'} size={18} />
             </div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-6xl font-black tracking-tighter ${isDark ? 'text-white' : 'text-gray-900'}`}>{avgNota}</span>
-            <span className={`text-sm font-semibold tracking-widest uppercase ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>/ 100</span>
+          
+          <div className="flex-1 h-[180px] mt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 5, right: 5, left: -30, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#334155' : '#f1f5f9'} />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
+                />
+                <Tooltip 
+                  cursor={{ fill: isDark ? '#1e293b' : '#f8fafc' }}
+                  contentStyle={{ 
+                    backgroundColor: isDark ? '#0f172a' : '#fff', 
+                    borderColor: isDark ? '#334155' : '#e2e8f0',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    color: isDark ? '#f1f5f9' : '#1e293b'
+                  }}
+                />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
         <div className={`absolute -bottom-8 -right-8 w-40 h-40 rounded-full opacity-[0.03] group-hover:opacity-10 transition-opacity duration-500 pointer-events-none blur-3xl ${isDark ? 'bg-blue-500' : 'bg-[#003B95]'}`}></div>
       </div>
 
-      {/* Bento 2: Recuperáveis */}
-      <div className={`p-6 rounded-3xl border flex flex-col justify-between shadow-sm relative overflow-hidden group transition-all duration-300 hover:shadow-lg ${isDark ? 'bg-emerald-950/20 border-emerald-900/30' : 'bg-emerald-50/30 border-emerald-100 hover:border-emerald-200'}`}>
-        <div className="relative z-10">
-          <div className="flex justify-between items-start mb-6">
-            <h3 className={`font-semibold tracking-tight uppercase text-xs ${isDark ? 'text-emerald-400/70' : 'text-emerald-600/70'}`}>Recuperáveis</h3>
-            <div className={`p-2 rounded-xl ${isDark ? 'bg-emerald-900/30' : 'bg-emerald-100/50'}`}>
-              <Wrench className={isDark ? 'text-emerald-400' : 'text-emerald-600'} size={18} />
+      {/* Bento 2: Combined Status (Recuperáveis + Sucata) */}
+      <div className={`md:col-span-1 p-6 rounded-3xl border flex flex-col justify-between shadow-sm relative overflow-hidden group transition-all duration-300 hover:shadow-lg ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 hover:border-blue-100'}`}>
+        <div className="relative z-10 h-full flex flex-col justify-between">
+          <div className="flex justify-between items-start mb-4">
+            <h3 className={`font-semibold tracking-tight uppercase text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Destinação de Status</h3>
+            <div className={`p-2 rounded-xl ${isDark ? 'bg-slate-100' : 'bg-gray-50'} dark:bg-slate-800`}>
+              <BarChart2 className={isDark ? 'text-slate-400' : 'text-gray-500'} size={18} />
             </div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-6xl font-black tracking-tighter ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{recuperavelCount}</span>
-            <span className={`text-sm font-semibold tracking-widest uppercase ${isDark ? 'text-emerald-600/50' : 'text-emerald-600/50'}`}>vtrs</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Bento 3: Sucatas */}
-      <div className={`p-6 rounded-3xl border flex flex-col justify-between shadow-sm relative overflow-hidden group transition-all duration-300 hover:shadow-lg ${isDark ? 'bg-red-950/20 border-red-900/30' : 'bg-red-50/30 border-red-100 hover:border-red-200'}`}>
-         <div className="relative z-10">
-          <div className="flex justify-between items-start mb-6">
-            <h3 className={`font-semibold tracking-tight uppercase text-xs ${isDark ? 'text-red-400/70' : 'text-red-600/70'}`}>Inservíveis / Sucata</h3>
-            <div className={`p-2 rounded-xl ${isDark ? 'bg-red-900/30' : 'bg-red-100/50'}`}>
-              <AlertTriangle className={isDark ? 'text-red-400' : 'text-red-600'} size={18} />
+          
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className={`text-4xl font-black tracking-tighter ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{recuperavelCount}</span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Recuperáveis</span>
+              </div>
+              <div className={`p-3 rounded-2xl ${isDark ? 'bg-emerald-900/20' : 'bg-emerald-50'}`}>
+                <Wrench className={isDark ? 'text-emerald-400' : 'text-emerald-600'} size={20} />
+              </div>
             </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-6xl font-black tracking-tighter ${isDark ? 'text-red-400' : 'text-red-600'}`}>{sucataCount}</span>
-            <span className={`text-sm font-semibold tracking-widest uppercase ${isDark ? 'text-red-600/50' : 'text-red-600/50'}`}>vtrs</span>
+            
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className={`text-4xl font-black tracking-tighter ${isDark ? 'text-red-400' : 'text-red-600'}`}>{sucataCount}</span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Sucata / Inservível</span>
+              </div>
+              <div className={`p-3 rounded-2xl ${isDark ? 'bg-red-900/20' : 'bg-red-50'}`}>
+                <AlertTriangle className={isDark ? 'text-red-400' : 'text-red-600'} size={20} />
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -605,6 +726,75 @@ const App = () => {
   const [wizStep, setWizStep] = useState(0);
   const [wizSubPhase, setWizSubPhase] = useState('REGIONAL');
   const [inspectedResults, setInspectedResults] = useState<Inspection[]>([]);
+  const [isCapturing, setIsCapturing] = useState<{ field: string; active: boolean }>({ field: '', active: false });
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const startCamera = async (field: string) => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("Seu navegador não suporta acesso à câmera.");
+      return;
+    }
+
+    setIsCapturing({ field, active: true });
+    try {
+      // Try high resolution environment camera first
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
+      } catch (e) {
+        console.warn("Failed giving high-res environment camera, falling back to standard video", e);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      // Small delay to ensure the video element is mounted when the state changes
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, 300);
+    } catch (err: any) {
+      console.error("Erro ao acessar câmera:", err);
+      let message = "Não foi possível acessar a câmera.";
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.message?.includes('Permission dismissed')) {
+        message = "Permissão de câmera negada. Por favor, habilite o acesso à câmera nas configurações do seu navegador para continuar.";
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        message = "Câmera não encontrada. Verifique se sua câmera está conectada.";
+      }
+      
+      alert(message);
+      setIsCapturing({ field: '', active: false });
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setIsCapturing({ field: '', active: false });
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg');
+        setLaudoData({ ...laudoData, [isCapturing.field]: dataUrl });
+        stopCamera();
+      }
+    }
+  };
   const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('');
@@ -1269,7 +1459,7 @@ const App = () => {
           endereco: v.endereco || { rua: "", bairro: "", num: "", cidade: v.municipio || "" } 
         },
         agency: { nome: "CORPO DE BOMBEIROS MILITAR DO PARANÁ", fone: "", presidente: "", membro1: "", membro2: "", portaria: "", dioe: "", processo: "", ano_proc: "2026", protocolo: "", regional: "" },
-        scores: {}, checklist: defaultChecklist, diagnostics: {}, description: "",
+        scores: {}, checklist: defaultChecklist, diagnostics: {}, checklistDiagnostics: {}, description: "",
         chassisPhoto: null, motorPhoto: null
       });
     }
@@ -1283,6 +1473,11 @@ const App = () => {
     const current = (laudoData.diagnostics[itemId] as any) || [];
     const updated = current.includes(prob) ? current.filter(p => p !== prob) : [...current, prob];
     setLaudoData({...laudoData, diagnostics: {...laudoData.diagnostics, [itemId]: updated}});
+  };
+  const handleChecklistProblemToggle = (itemId, prob) => {
+    const current = (laudoData.checklistDiagnostics?.[itemId] as any) || [];
+    const updated = current.includes(prob) ? current.filter(p => p !== prob) : [...current, prob];
+    setLaudoData({...laudoData, checklistDiagnostics: {...(laudoData.checklistDiagnostics || {}), [itemId]: updated}});
   };
 
   const selectRegional = (c) => {
@@ -1329,9 +1524,24 @@ const App = () => {
           const itemLabel = SCORE_CATEGORIES.flatMap(cat => cat.items).find(i => i.id === itemId)?.label.split('-')[0];
           return `${itemLabel}: ${(list as any).join(', ').toLowerCase()}`;
        });
-       const missingChecklist = Object.entries(laudoData.checklist).filter(([,v]) => v === 'N' || v === 'D').map(([k, v]) => `${k} (${v === 'D' ? 'danificado' : 'ausente'})`);
+
+       const checklistProblemsFlat = Object.entries(laudoData.checklistDiagnostics || {}).filter(([, list]) => (list as any).length > 0).map(([itemId, list]) => {
+          return `${itemId}: ${(list as any).join(', ').toLowerCase()}`;
+       });
+
+       const missingChecklist = Object.entries(laudoData.checklist).filter(([,v]) => v === 'N' || v === 'D').map(([k, v]) => {
+          if (v === 'D') {
+             const specificProbs = laudoData.checklistDiagnostics?.[k];
+             return `${k} (danificado${specificProbs && specificProbs.length > 0 ? ': ' + specificProbs.join(', ') : ''})`;
+          }
+          return `${k} (ausente)`;
+       });
+
        let autoDesc = "";
-       if (problemsFlat.length > 0) autoDesc += `Diagnóstico Técnico - ${problemsFlat.join('; ')}. `;
+       if (problemsFlat.length > 0 || checklistProblemsFlat.length > 0) {
+          const allProbs = [...problemsFlat, ...checklistProblemsFlat];
+          autoDesc += `Diagnóstico Técnico - ${allProbs.join('; ')}. `;
+       }
        if (missingChecklist.length > 0) autoDesc += `Integridade Física - ${missingChecklist.join(', ')}. `;
        if (!autoDesc) autoDesc = "Veículo em perfeitas condições conforme vistoria técnica.";
        setLaudoData({...laudoData, description: autoDesc});
@@ -1682,14 +1892,6 @@ const App = () => {
           </button>
           
           <button 
-            onClick={() => { setActiveTab('planilha'); setIsMenuOpen(false); }} 
-            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'planilha' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
-          >
-            <Table size={20} />
-            <span className="text-sm text-left">Cadastro de Veículos</span>
-          </button>
-          
-          <button 
             onClick={() => { setActiveTab('selecao'); setIsMenuOpen(false); }} 
             className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'selecao' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
           >
@@ -1703,6 +1905,14 @@ const App = () => {
           >
             <LayoutDashboard size={20} />
             <span className="text-sm text-left">Gestão de Laudos</span>
+          </button>
+
+          <button 
+            onClick={() => { setActiveTab('incluir_veiculos'); setIsMenuOpen(false); }} 
+            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'incluir_veiculos' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+          >
+            <Plus size={20} />
+            <span className="text-sm text-left">Incluir Veículos</span>
           </button>
 
           <div className="pt-8 mt-auto flex flex-col space-y-4">
@@ -1738,10 +1948,10 @@ const App = () => {
           <div className="flex items-center space-x-3">
             <button 
               onClick={() => setIsMenuOpen(true)}
-              className={`lg:hidden p-2 pr-3 rounded-lg transition-colors flex items-center space-x-2 ${isDark ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 uppercase text-[10px] font-bold tracking-widest'}`}
+              className={`lg:hidden p-2 pr-4 rounded-xl transition-all duration-300 flex items-center space-x-2.5 active:scale-95 ${isDark ? 'bg-slate-800/80 text-blue-400 hover:bg-slate-800' : 'bg-white text-[#003B95] border border-gray-100 shadow-sm hover:border-blue-200'}`}
             >
-              <Menu size={20} />
-              <span className="text-[10px] font-black tracking-tighter">MENU</span>
+              <LayoutGrid size={18} strokeWidth={2.5} className="animate-pulse" />
+              <span className="text-[10px] font-black tracking-widest uppercase">Menu</span>
             </button>
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
               <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-[#003B95] text-white border-[#002868] border-b-amber-400'}`}>
@@ -1755,19 +1965,6 @@ const App = () => {
           </div>
 
           <div className="flex items-center space-x-2 lg:space-x-3">
-          <label 
-            className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-            title="Upload de Tabela Geral de Dados"
-          >
-            <UploadCloud size={18} />
-            <input 
-              type="file" 
-              className="hidden" 
-              accept=".xlsx, .xls, .csv" 
-              onChange={handleTabelaGeralUpload}
-            />
-          </label>
-          
           <button 
             onClick={toggleTheme} 
             className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
@@ -1789,51 +1986,136 @@ const App = () => {
 
         <div className="p-4 md:p-8 lg:p-12">
         {activeTab === 'inicio' && (
-           <div className="max-w-5xl mx-auto pt-2 pb-8">
+           <div className="max-w-6xl mx-auto pt-2 pb-12">
+             {/* Header Section */}
+             <div className="mb-10">
+                <h1 className={`text-3xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Olá, {user?.displayName?.split(' ')[0] || 'Avaliador'}
+                </h1>
+                <p className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                  Bem-vindo ao centro de comando Argos. Aqui está o resumo das suas operações.
+                </p>
+             </div>
+
+             {/* Main Metrics */}
              <DashboardSummary frota={frota} inspectedResults={inspectedResults} isDark={isDark} />
 
+             {/* Detailed metrics row */}
              <AnalyticsHeader inspectedResults={inspectedResults} isDark={isDark} />
 
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-                <button 
-                  onClick={() => setActiveTab('selecao')}
-                  className={`p-8 rounded-lg border text-left flex flex-col justify-between shadow-sm transition-shadow hover:shadow-md ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}
-                >
-                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-6 shadow-sm border ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                    <Database size={24} />
-                  </div>
-
-                  <div>
-                    <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Inventário Operacional</h3>
-                    <p className={`text-sm mb-6 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Acesse o banco de dados de frotas e unidades móveis para realizar vistorias.</p>
-                    
-                    <div className={`flex items-center text-sm font-semibold ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}>
-                      <span>Explorar veículos</span>
-                      <ChevronRight size={16} className="ml-1" />
-                    </div>
-                  </div>
-                </button>
-
-                <div 
-                  className={`p-8 rounded-lg border text-left flex flex-col justify-between shadow-sm transition-shadow hover:shadow-md ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}
-                >
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-4">
+                {/* Quick Actions */}
+                <div className="lg:col-span-1 space-y-6">
+                  <h3 className={`text-sm font-black uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Ações Rápidas</h3>
                   
-                  <label className="cursor-pointer flex flex-col h-full justify-between">
-                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-6 shadow-sm border ${isDark ? 'bg-slate-900 border-slate-700 text-green-400' : 'bg-green-50 border-green-100 text-green-600'}`}>
-                      <UploadCloud size={24} />
-                    </div>
-
-                    <div>
-                      <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Carga de Ativos</h3>
-                      <p className={`text-sm mb-6 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Integração massiva via planilhas de auditoria (formato XLSX, CSV).</p>
-                      
-                      <div className="flex items-center text-sm font-semibold text-green-600 dark:text-green-400">
-                        <span>Sincronizar planilha</span>
-                        <ChevronRight size={16} className="ml-1" />
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => setActiveTab('selecao')}
+                      className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-blue-600/10 border-blue-500/20 text-blue-400 hover:bg-blue-600/20' : 'bg-blue-50 border-blue-100 text-[#003B95] hover:bg-blue-100'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-blue-500/20' : 'bg-white'}`}>
+                        <Plus size={20} />
                       </div>
+                      <div className="text-left">
+                        <p className="font-bold text-sm">Nova Avaliação</p>
+                        <p className="text-[10px] opacity-70 uppercase font-semibold">Iniciar inspeção técnica</p>
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={() => setActiveTab('dashboard')}
+                      className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-gray-100'}`}>
+                        <LayoutDashboard size={20} />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-bold text-sm">Gerenciar Laudos</p>
+                        <p className="text-[10px] opacity-70 uppercase font-semibold">Ver histórico completo</p>
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={() => setActiveTab('planilha')}
+                      className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-gray-100'}`}>
+                        <Database size={20} />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-bold text-sm">Gestão de Tabela</p>
+                        <p className="text-[10px] opacity-70 uppercase font-semibold">Importar dados de frota</p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* System Tip Card */}
+                  <div className={`p-6 rounded-3xl border ${isDark ? 'bg-gradient-to-br from-indigo-900/20 to-slate-900 border-slate-800' : 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-700 shadow-xl shadow-blue-900/20'}`}>
+                    <div className="flex items-center space-x-2 text-white/90 mb-3">
+                       <Zap size={16} fill="white" className="text-amber-300" />
+                       <span className="text-[10px] font-black uppercase tracking-widest">Dica Argos</span>
                     </div>
-                    <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={handleTabelaGeralUpload} />
-                  </label>
+                    <p className="text-white text-xs font-medium leading-relaxed">
+                      Lembre-se de anexar no mínimo 4 fotos por veículo para garantir a precisão do laudo automatizado via IA.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Recent Activities */}
+                <div className="lg:col-span-2">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className={`text-sm font-black uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Avaliações Recentes</h3>
+                    <button onClick={() => setActiveTab('dashboard')} className={`text-xs font-bold ${isDark ? 'text-blue-400' : 'text-[#003B95]'} hover:underline`}>Ver todos</button>
+                  </div>
+
+                  <div className={`rounded-2xl border overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
+                    {inspectedResults.length > 0 ? (
+                      <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                        {inspectedResults.slice(0, 5).map((res: any, idx: number) => (
+                          <div 
+                            key={res.id || idx}
+                            className={`p-4 flex items-center justify-between transition-colors hover:bg-gray-50/50 dark:hover:bg-slate-800/30 cursor-pointer`}
+                            onClick={() => { setLaudoData(res.fullData); setViewMode(true); setActiveTab('mimico'); }}
+                          >
+                             <div className="flex items-center space-x-4 min-w-0">
+                                <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-bold text-[10px] ${res.class === 'SUCATA' ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>
+                                  <span className="leading-tight">{res.placa.slice(0, 3)}</span>
+                                  <span className="leading-tight">{res.placa.slice(3)}</span>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{res.vehicleInfo || 'Veículo Identificado'}</p>
+                                  <div className="flex items-center space-x-2 mt-0.5">
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-gray-100 text-gray-500'}`}>
+                                      {res.class}
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 font-medium">#{res.numLaudo || 'N/A'}</span>
+                                  </div>
+                                </div>
+                             </div>
+                             <div className="text-right flex flex-col items-end">
+                                <div className={`text-sm font-black ${res.nota > 70 ? 'text-emerald-500' : res.nota > 40 ? 'text-amber-500' : 'text-red-500'}`}>
+                                  {res.nota}
+                                </div>
+                                <span className="text-[10px] text-gray-400 uppercase font-black tracking-tighter">SCORE</span>
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-12 text-center">
+                        <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-4 ${isDark ? 'bg-slate-800 text-slate-600' : 'bg-gray-50 text-gray-300'}`}>
+                          <ClipboardList size={32} />
+                        </div>
+                        <p className={`text-sm font-medium ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Nenhuma avaliação realizada ainda.</p>
+                        <button 
+                          onClick={() => setActiveTab('selecao')}
+                          className="mt-4 text-xs font-bold text-blue-500 hover:underline"
+                        >
+                          Começar agora
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
              </div>
            </div>
@@ -2049,6 +2331,40 @@ const App = () => {
                   <button onClick={() => setSearchTerm('')} className="mt-6 px-4 py-2 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 rounded-md text-sm font-semibold hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">Limpar Filtros</button>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Camera Modal */}
+        {isCapturing.active && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
+            <div className="relative w-full max-w-lg bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+              <div className="p-4 border-b border-white/5 flex justify-between items-center bg-slate-900">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <h3 className="text-white font-bold text-sm uppercase tracking-wider">Capturar: {isCapturing.field === 'chassisPhoto' ? 'Chassi' : 'Motor'}</h3>
+                </div>
+                <button onClick={stopCamera} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                <div className="absolute inset-0 border-2 border-dashed border-white/30 pointer-events-none m-12 rounded-xl flex items-center justify-center">
+                   <div className="w-48 h-12 border border-white/20 rounded flex items-center justify-center">
+                      <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">Alinhar aqui</span>
+                   </div>
+                </div>
+              </div>
+              <div className="p-8 flex flex-col items-center bg-slate-900">
+                <button 
+                  onClick={capturePhoto}
+                  className="w-20 h-20 rounded-full bg-white flex items-center justify-center shadow-2xl active:scale-90 transition-all border-[6px] border-slate-800 group"
+                >
+                  <div className="w-14 h-14 rounded-full border-2 border-slate-900 group-hover:bg-slate-50 transition-colors" />
+                </button>
+                <p className="mt-6 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">Pressione para fotografar</p>
+              </div>
             </div>
           </div>
         )}
@@ -2376,23 +2692,46 @@ const App = () => {
                        </div>
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                          {CHECKLIST_WIZARD_STRUCTURE[CHECKLIST_KEYS[wizStep]].map(id => (
-                          <div key={id} className={`p-4 rounded-md border flex items-center justify-between transition-colors ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
-                            <span className={`text-sm font-semibold ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{id}</span>
-                            <div className="flex space-x-2">
-                              {['S', 'N', 'D'].map(v => (
-                                <button 
-                                  key={v} 
-                                  onClick={() => handleCheck(id, v)} 
-                                  className={`w-10 h-10 rounded-md text-sm font-bold transition-colors border ${
-                                    laudoData.checklist[id] === v 
-                                      ? (v === 'S' ? 'bg-green-600 border-green-700 text-white' : v === 'N' ? 'bg-red-600 border-red-700 text-white' : 'bg-amber-500 border-amber-600 text-white') 
-                                      : (isDark ? 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100')
-                                  }`}
-                                >
-                                  {v}
-                                </button>
-                             ))}
+                          <div key={id} className={`p-4 rounded-md border flex flex-col transition-colors ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className={`text-sm font-semibold ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{id}</span>
+                              <div className="flex space-x-1">
+                               {['S', 'N', 'D'].map(v => (
+                                 <button 
+                                   key={v} 
+                                   onClick={() => handleCheck(id, v)} 
+                                   className={`px-2 h-10 rounded-md text-[10px] font-bold transition-colors border ${
+                                     laudoData.checklist[id] === v 
+                                       ? (v === 'S' ? 'bg-green-600 border-green-700 text-white' : v === 'N' ? 'bg-red-600 border-red-700 text-white' : 'bg-amber-500 border-amber-600 text-white') 
+                                       : (isDark ? 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100')
+                                   }`}
+                                 >
+                                   {v === 'S' ? 'SIM' : v === 'N' ? 'NÃO' : 'DANIF'}
+                                 </button>
+                               ))}
+                              </div>
                             </div>
+
+                            {laudoData.checklist[id] === 'D' && CHECKLIST_PROBLEMS[id] && (
+                              <div className="mt-2 pt-2 border-t border-dashed border-gray-200 dark:border-slate-700">
+                                <p className="text-[10px] font-bold text-gray-500 dark:text-slate-400 mb-2 uppercase">Problemas Comuns:</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {CHECKLIST_PROBLEMS[id].map(prob => (
+                                    <button 
+                                      key={prob}
+                                      onClick={() => handleChecklistProblemToggle(id, prob)}
+                                      className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                                        laudoData.checklistDiagnostics?.[id]?.includes(prob)
+                                          ? 'bg-amber-100 border-amber-300 text-amber-800 dark:bg-amber-900/50 dark:border-amber-700 dark:text-amber-200'
+                                          : 'bg-transparent border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {prob}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                       ))}</div>
                       <div className="mt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -2400,7 +2739,7 @@ const App = () => {
                             <ChevronLeft size={16} className="mr-1" /> Voltar
                           </button>
                           <button onClick={nextWizard} className="w-full sm:w-auto px-8 py-3 rounded-md font-semibold text-sm transition-colors bg-[#003B95] text-white hover:bg-blue-800">
-                             Finalizar Giro
+                             Avançar
                           </button>
                        </div>
                     </div>
@@ -2435,7 +2774,39 @@ const App = () => {
                                          <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDark ? 'bg-slate-900 group-hover:bg-slate-700' : 'bg-gray-200 group-hover:bg-gray-300'}`}>
                                             <Camera size={24} className={isDark ? 'text-slate-500' : 'text-gray-600'} />
                                          </div>
-                                         <span className="font-semibold text-sm">Capturar Chassi</span>
+
+                                       <div className="flex flex-col items-center gap-4 px-6 w-full">
+                                          <div className="flex gap-2 w-full max-w-xs">
+                                             <button 
+                                                onClick={() => startCamera('chassisPhoto')}
+                                                className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400 hover:bg-slate-800' : 'bg-white border-blue-100 text-blue-600 hover:bg-blue-50'}`}
+                                             >
+                                                <Camera size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Câmera</span>
+                                             </button>
+                                             <label className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border cursor-pointer transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-green-400 hover:bg-slate-800' : 'bg-white border-green-100 text-green-600 hover:bg-green-50'}`}>
+                                                <UploadCloud size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Arquivo</span>
+                                                <input 
+                                                   type="file" 
+                                                   className="hidden" 
+                                                   accept="image/*" 
+                                                   onChange={(e) => {
+                                                      const file = e.target.files?.[0];
+                                                      if (file) {
+                                                        const r = new FileReader();
+                                                        r.onload = (ev) => {
+                                                           if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'chassis' });
+                                                        };
+                                                        r.readAsDataURL(file);
+                                                      }
+                                                      e.target.value = '';
+                                                   }} 
+                                                />
+                                             </label>
+                                          </div>
+                                          <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Captura de Identificação</p>
+                                       </div>
                                          <span className="text-xs mt-1">Câmera ou Arquivo</span>
                                       </div>
                                    )}
@@ -2479,7 +2850,40 @@ const App = () => {
                                          <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDark ? 'bg-slate-900 group-hover:bg-slate-700' : 'bg-gray-200 group-hover:bg-gray-300'}`}>
                                             <Cog size={24} className={isDark ? 'text-slate-500' : 'text-gray-600'} />
                                          </div>
-                                         <span className="font-semibold text-sm">Capturar Motor</span>
+
+
+                                       <div className="flex flex-col items-center gap-4 px-6 w-full">
+                                          <div className="flex gap-2 w-full max-w-xs">
+                                             <button 
+                                                onClick={() => startCamera('motorPhoto')}
+                                                className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400 hover:bg-slate-800' : 'bg-white border-blue-100 text-blue-600 hover:bg-blue-50'}`}
+                                             >
+                                                <Camera size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Câmera</span>
+                                             </button>
+                                             <label className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border cursor-pointer transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-green-400 hover:bg-slate-800' : 'bg-white border-green-100 text-green-600 hover:bg-green-50'}`}>
+                                                <UploadCloud size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Arquivo</span>
+                                                <input 
+                                                   type="file" 
+                                                   className="hidden" 
+                                                   accept="image/*" 
+                                                   onChange={(e) => {
+                                                      const file = e.target.files?.[0];
+                                                      if (file) {
+                                                        const r = new FileReader();
+                                                        r.onload = (ev) => {
+                                                           if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'motor' });
+                                                        };
+                                                        r.readAsDataURL(file);
+                                                      }
+                                                      e.target.value = '';
+                                                   }} 
+                                                />
+                                             </label>
+                                          </div>
+                                          <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Captura de Identificação</p>
+                                       </div>
                                          <span className="text-xs mt-1">Câmera ou Arquivo</span>
                                       </div>
                                    )}
@@ -2648,6 +3052,65 @@ const App = () => {
                )}
              </div>
            </div>
+        )}
+
+        {activeTab === 'incluir_veiculos' && (
+          <div className="max-w-4xl mx-auto pt-8 pb-8 px-6">
+            <header className="mb-10 text-center md:text-left">
+              <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Incluir Veículos</h1>
+              <p className={`text-lg font-medium opacity-60 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Escolha o método de inclusão de novos veículos ao sistema</p>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Option 1: Manual Registration / Spreadsheet */}
+              <div 
+                onClick={() => setActiveTab('planilha')}
+                className={`p-10 rounded-[2.5rem] border-2 cursor-pointer transition-all duration-300 group flex flex-col items-center text-center shadow-xl hover:shadow-2xl hover:-translate-y-2 ${isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80' : 'bg-white border-gray-100 hover:border-blue-100 hover:bg-blue-50/10'}`}
+              >
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center mb-8 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-6 ${isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-[#003B95]'}`}>
+                  <Table size={48} strokeWidth={1.5} />
+                </div>
+                <h2 className={`text-2xl font-black mb-4 tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Cadastro Manual</h2>
+                <p className={`text-sm leading-relaxed mb-8 font-medium ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                  Insira os dados do veículo manualmente ou utilize o editor de planilha dinâmica para múltiplos veículos.
+                </p>
+                <div className={`mt-auto px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isDark ? 'bg-blue-600 text-white group-hover:bg-blue-500 shadow-blue-900/40 shadow-lg' : 'bg-[#003B95] text-white group-hover:bg-[#002868] shadow-blue-200 shadow-xl'}`}>
+                  Iniciar Cadastro
+                </div>
+              </div>
+
+              {/* Option 2: Upload Excel/CSV (Item J) */}
+              <label 
+                className={`p-10 rounded-[2.5rem] border-2 cursor-pointer transition-all duration-300 group flex flex-col items-center text-center shadow-xl hover:shadow-2xl hover:-translate-y-2 ${isDark ? 'bg-slate-900 border-slate-800 hover:border-emerald-500/50 hover:bg-slate-800/80' : 'bg-white border-gray-100 hover:border-emerald-100 hover:bg-emerald-50/10'}`}
+              >
+                <input 
+                  type="file" 
+                  className="hidden" 
+                  accept=".xlsx, .xls, .csv" 
+                  onChange={handleTabelaGeralUpload}
+                />
+                <div className={`w-24 h-24 rounded-[2rem] flex items-center justify-center mb-8 transition-transform duration-500 group-hover:scale-110 group-hover:-rotate-6 ${isDark ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                  <UploadCloud size={48} strokeWidth={1.5} />
+                </div>
+                <h2 className={`text-2xl font-black mb-4 tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Upload Item J</h2>
+                <p className={`text-sm leading-relaxed mb-8 font-medium ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                  Importe uma lista completa de veículos utilizando a Tabela Geral de Dados do Item J (.xlsx, .csv).
+                </p>
+                <div className={`mt-auto px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${isDark ? 'bg-emerald-600 text-white group-hover:bg-emerald-500 shadow-emerald-900/40 shadow-lg' : 'bg-emerald-600 text-white group-hover:bg-emerald-500 shadow-emerald-200 shadow-xl'}`}>
+                  Selecionar Arquivo
+                </div>
+              </label>
+            </div>
+
+            <div className={`mt-12 p-6 rounded-3xl border border-dashed flex items-center space-x-4 ${isDark ? 'bg-slate-900/50 border-slate-700 text-slate-400' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+              <div className={`p-3 rounded-2xl ${isDark ? 'bg-amber-900/20 text-amber-500' : 'bg-amber-50 text-amber-600'}`}>
+                <AlertCircle size={24} />
+              </div>
+              <p className="text-sm font-medium leading-normal">
+                Certifique-se de que os dados de chassi e motor estejam corretos antes de processar o upload em massa para garantir a integridade dos laudos futuros.
+              </p>
+            </div>
+          </div>
         )}
         </div>
         {/* Hidden container for PDF export */}
