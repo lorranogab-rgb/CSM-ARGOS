@@ -64,9 +64,9 @@ export const LoadingArgos: React.FC<LoadingArgosProps> = ({ type, message, isDar
         {progress !== undefined && (
           <div className="w-full mt-4 min-w-[200px]">
              <div className={`w-full rounded-full h-2.5 ${isDark ? 'bg-slate-700' : 'bg-gray-200'}`}>
-               <div className="h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%`, backgroundColor: liquidColor }}></div>
+               <div className="h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress || 0}%`, backgroundColor: liquidColor }}></div>
              </div>
-             <p className={`text-sm text-center mt-2 font-semibold ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{Math.round(progress)}%</p>
+             <p className={`text-sm text-center mt-2 font-semibold ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{Math.round(progress || 0)}%</p>
           </div>
         )}
       </div>
