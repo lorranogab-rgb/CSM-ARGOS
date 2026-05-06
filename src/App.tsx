@@ -1086,6 +1086,33 @@ const App = () => {
   const [wizStep, setWizStep] = useState(0);
   const [acceptResponsibility, setAcceptResponsibility] = useState(false);
   const [inspectedResults, setInspectedResults] = useState<Inspection[]>([]);
+  const [dashboardSearchTerm, setDashboardSearchTerm] = useState('');
+
+  const filteredInspectedResults = useMemo(() => {
+    if (!dashboardSearchTerm.trim()) return inspectedResults;
+    const term = dashboardSearchTerm.toLowerCase();
+    return inspectedResults.filter(r => 
+      r.placa.toLowerCase().includes(term) || 
+      r.modelo.toLowerCase().includes(term)
+    );
+  }, [inspectedResults, dashboardSearchTerm]);
+
+  const dashboardStats = useMemo(() => {
+    const total = inspectedResults.length;
+    
+    // Soma do valor FIPE apenas para veículos sem impedimentos
+    const totalRevenue = inspectedResults.reduce((acc, r) => {
+      if (!r.hasImpediment && r.minFipe) {
+        return acc + r.minFipe;
+      }
+      return acc;
+    }, 0);
+    
+    return {
+      total,
+      totalRevenue
+    };
+  }, [inspectedResults]);
   const [isCapturing, setIsCapturing] = useState<{ field: string; active: boolean }>({ field: '', active: false });
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -1195,6 +1222,7 @@ const App = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [viewingHistory, setViewingHistory] = useState<string | null>(null);
   const [selectedYard, setSelectedYard] = useState<string | null>(null);
+  const [sourceTab, setSourceTab] = useState<string>('inicio');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
@@ -1279,6 +1307,7 @@ const App = () => {
     if (existing && existing.fullData) {
       setLaudoData(existing.fullData);
       setViewMode(true);
+      setSourceTab(activeTab);
       setActiveTab('mimico');
       setViewingVehicleDetails(null);
     } else if (existing) {
@@ -1301,6 +1330,7 @@ const App = () => {
         items: existing.items || [] 
       });
       setViewMode(true);
+      setSourceTab(activeTab);
       setActiveTab('mimico');
       setViewingVehicleDetails(null);
     }
@@ -2061,6 +2091,7 @@ const App = () => {
        if (missingChecklist.length > 0) autoDesc += `Integridade Física - ${missingChecklist.join(', ')}. `;
        if (!autoDesc) autoDesc = "Veículo em perfeitas condições conforme vistoria técnica.";
        setLaudoData({...laudoData, description: autoDesc});
+       setSourceTab(activeTab);
        setActiveTab('mimico');
     }
   };
@@ -2707,7 +2738,7 @@ const App = () => {
                            </div>
 
                            <div 
-                             onClick={() => { setLaudoData(res.fullData); setViewMode(true); setActiveTab('mimico'); }}
+                             onClick={() => { setLaudoData(res.fullData); setViewMode(true); setSourceTab(activeTab); setActiveTab('mimico'); }}
                              className={`p-5 rounded-3xl border transition-all cursor-pointer group-hover:shadow-xl group-hover:-translate-y-1 ${
                                res.hasImpediment || res.class === 'IMPEDIMENTOS'
                                  ? (isDark ? 'bg-red-900/10 border-red-800/60 hover:border-red-700 shadow-[0_0_15px_rgba(239,68,68,0.15)]' : 'bg-red-50 border-red-100/50 hover:bg-red-100 shadow-[0_0_15px_rgba(239,68,68,0.15)]')
@@ -3897,8 +3928,8 @@ const App = () => {
                     <Undo2 size={18}/><span>Voltar Etapa</span>
                   </button>
                 )}
-                <button onClick={() => setActiveTab('selecao')} className="flex items-center space-x-2 text-slate-500 font-bold uppercase text-xs tracking-widest hover:text-white transition-colors">
-                  <ChevronLeft size={18}/><span>Voltar Pátio</span>
+                <button onClick={() => setActiveTab(sourceTab)} className="flex items-center space-x-2 text-slate-500 font-bold uppercase text-xs tracking-widest hover:text-white transition-colors">
+                  <ChevronLeft size={18}/><span>Voltar</span>
                 </button>
               </div>
               <div className="flex space-x-3">
@@ -3990,104 +4021,206 @@ const App = () => {
 
         {activeTab === 'dashboard' && (
            <div className="max-w-7xl mx-auto py-8">
-             <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
+             <header className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6 px-4 md:px-0">
                <div>
-                 <h2 className={`text-2xl lg:text-3xl font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                   Gestão de Laudos
+                 <div className="flex items-center gap-3 mb-2">
+                   <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
+                     <LayoutDashboard size={20} />
+                   </div>
+                   <span className="text-xs font-black uppercase tracking-widest text-blue-500">Monitoramento em Tempo Real</span>
+                 </div>
+                 <h2 className={`text-4xl lg:text-5xl font-black tracking-tighter ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                   Gestão de<br className="sm:hidden" /> Laudos
                  </h2>
-                 <p className={`text-sm mt-1 font-medium ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                   {inspectedResults.length} {inspectedResults.length === 1 ? 'veículo homologado' : 'veículos homologados'}
+                 <p className={`text-sm mt-3 font-medium flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                   <Database size={14} className="opacity-50" />
+                   Base de dados: {inspectedResults.length} {inspectedResults.length === 1 ? 'veículo homologado' : 'veículos homologados'}
                  </p>
                </div>
                
                <div className="flex flex-wrap gap-3">
                  {!isExportMode ? (
                    <>
-                     <button onClick={exportLaudosAsAnexoJ} className={`px-4 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:shadow-md'}`}>
-                       <Database size={16} /> Exportar relatório
+                     <button onClick={exportLaudosAsAnexoJ} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:shadow-lg'}`}>
+                       <Download size={16} /> Exportar Planilha
                      </button>
-                     <button onClick={() => setIsExportMode(true)} className={`px-4 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-[#003B95] border-[#003B95] text-white hover:bg-blue-800' : 'bg-[#003B95] border-[#003B95] text-white hover:bg-blue-800 hover:shadow-md'}`}>
-                       <Printer size={16} /> Laudos em Lote
+                     <button onClick={() => setIsExportMode(true)} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 ${isDark ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-[#003B95] border-[#003B95] text-white hover:bg-blue-800 shadow-blue-500/20'}`}>
+                       <Printer size={16} /> Exportar Laudos
                      </button>
                    </>
                  ) : (
                    <>
-                     <button onClick={handleBulkExport} disabled={bulkExporting || selectedLaudos.length === 0} className={`px-4 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm border flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : ""} ${isDark ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700' : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'}`}>
+                     <button onClick={handleBulkExport} disabled={bulkExporting || selectedLaudos.length === 0} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg border flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : ""} ${isDark ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700' : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20'}`}>
                        {bulkExporting ? <RotateCw size={16} className="animate-spin" /> : <Printer size={16} />}
-                       {bulkExporting ? "Gerando..." : `Exportar (${selectedLaudos.length})`}
+                       {bulkExporting ? "Processando..." : `Confirmar Exportação (${selectedLaudos.length})`}
                      </button>
-                     <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`px-4 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
-                       <Undo2 size={16} /> Cancelar
+                     <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
+                       <X size={16} /> Cancelar Seleção
                      </button>
                    </>
                  )}
                </div>
              </header>
 
-             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-               {inspectedResults.map(r => {
+             {/* Search Bar */}
+             <div className="mb-6 px-4 md:px-0">
+               <div className="relative group">
+                 <div className={`absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none transition-colors ${isDark ? 'group-focus-within:text-blue-500 text-slate-500' : 'group-focus-within:text-[#003B95] text-gray-400'}`}>
+                   <Search size={18} />
+                 </div>
+                 <input
+                   type="text"
+                   placeholder="Pesquisar por placa ou modelo..."
+                   value={dashboardSearchTerm}
+                   onChange={(e) => setDashboardSearchTerm(e.target.value)}
+                   className={`w-full pl-12 pr-4 py-4 rounded-2xl border-2 transition-all outline-none font-bold text-sm ${
+                     isDark 
+                       ? 'bg-slate-900 border-slate-800 focus:border-blue-500/50 text-white placeholder:text-slate-600' 
+                       : 'bg-white border-gray-100 focus:border-[#003B95]/30 text-gray-900 placeholder:text-gray-400 focus:shadow-lg focus:shadow-blue-500/10'
+                   }`}
+                 />
+                 {dashboardSearchTerm && (
+                   <button 
+                     onClick={() => setDashboardSearchTerm('')}
+                     className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                   >
+                     <X size={18} />
+                   </button>
+                 )}
+               </div>
+             </div>
+
+             {/* Dashboard Metrics Section */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10 px-4 md:px-0">
+               <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
+                 <div className="flex items-center justify-between mb-4">
+                   <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500 font-black">
+                     <ClipboardList size={24} />
+                   </div>
+                   <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">Atualizado</span>
+                 </div>
+                 <div className="text-4xl font-black tracking-tighter mb-1">{dashboardStats.total}</div>
+                 <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Volume Total de Vistorias</div>
+               </div>
+
+               <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
+                 <div className="flex items-center justify-between mb-4">
+                   <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500 font-black">
+                     <Zap size={24} />
+                   </div>
+                   <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">Valor de Mercado</span>
+                 </div>
+                 <div className="text-4xl font-black tracking-tighter mb-1">
+                   {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(dashboardStats.totalRevenue)}
+                 </div>
+                 <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Arrecadação Mínima (FIPE s/ impedimentos)</div>
+               </div>
+             </div>
+
+             <div className="flex flex-col space-y-2">
+               {/* Header da Lista (Oculto em mobile) */}
+               <div className={`hidden md:grid md:grid-cols-12 gap-4 px-6 py-3 border-b text-[10px] font-black uppercase tracking-widest ${isDark ? 'border-slate-800 text-slate-500' : 'border-gray-100 text-gray-400'}`}>
+                 <div className="col-span-1 flex items-center">Nota</div>
+                 <div className="col-span-2">Placa</div>
+                 <div className="col-span-3">Modelo</div>
+                 <div className="col-span-2">Classificação</div>
+                 <div className="col-span-4 text-right">Ações de Gestão</div>
+               </div>
+
+               {filteredInspectedResults.map(r => {
                  const hasImpediment = r.hasImpediment || r.class === 'IMPEDIMENTOS';
                  return (
-                 <div key={r.id} className={`group relative p-5 rounded-2xl border transition-all duration-300 flex flex-col justify-between ${
-                   hasImpediment 
-                     ? (isDark ? 'bg-red-900/10 border-red-800 hover:bg-red-900/20 shadow-[0_0_20px_rgba(239,68,68,0.15)]' : 'bg-red-50 border-red-200 hover:bg-red-100/50 shadow-[0_0_20px_rgba(239,68,68,0.15)]')
-                     : (isDark ? 'bg-slate-900/50 border-slate-800 hover:bg-slate-800 hover:border-slate-700 hover:shadow-xl hover:shadow-slate-950/50' : 'bg-white border-gray-100 hover:border-gray-200 hover:shadow-xl hover:-translate-y-1')
-                }`}>
-                    
-                    {isExportMode && (
-                        <div className="absolute top-4 right-4 z-10">
-                          <input type="checkbox" className="w-5 h-5 rounded-md border-gray-300 text-[#003B95] focus:ring-[#003B95] cursor-pointer" checked={selectedLaudos.includes(r.id)} onChange={e => {
-                            if (e.target.checked) setSelectedLaudos([...selectedLaudos, r.id]);
-                            else setSelectedLaudos(selectedLaudos.filter(id => id !== r.id));
-                          }} />
-                        </div>
-                    )}
-                    
-                    <div className="flex flex-col items-center text-center space-y-4 mb-6 mt-2">
-                        <div className="relative">
-                          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl border-2 transition-transform group-hover:scale-105 ${isDark ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-gray-50 text-[#003B95] border-gray-100'}`}>
-                            {r.nota}
-                          </div>
-                        </div>
-                        
-                        <div className="w-full px-2">
-                          <h3 className={`text-base font-bold tracking-tight truncate leading-tight ${isDark ? 'text-white' : 'text-gray-900'}`} title={r.modelo}>{r.modelo}</h3>
-                          <div className="flex flex-col items-center mt-2 space-y-2">
-                             <div className={`font-mono text-sm font-semibold tracking-wider px-2.5 py-1 rounded-md ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-gray-100 text-gray-600'}`}>{r.placa}</div>
-                             <span className={`px-2 py-1 rounded-full font-bold text-[10px] uppercase tracking-widest ${r.class === 'SUCATA' ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>{r.class}</span>
-                          </div>
-                        </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-4 gap-2 w-full mt-auto">
-                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(true); setActiveTab('mimico'); }} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Visualizar">
-                          <Eye size={18} />
-                          <span className="text-[9px] font-bold mt-1 uppercase">Ver</span>
-                       </button>
-                       <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setActiveTab('mimico'); }} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
-                          <Pencil size={18} />
-                          <span className="text-[9px] font-bold mt-1 uppercase">Editar</span>
-                       </button>
-                       <button onClick={() => setViewingHistory(r.id)} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Histórico">
-                          <History size={18} />
-                          <span className="text-[9px] font-bold mt-1 uppercase">Hist.</span>
-                       </button>
+                   <div 
+                     key={r.id} 
+                     className={`group relative px-4 md:px-6 py-4 rounded-2xl border transition-all duration-200 flex flex-col md:grid md:grid-cols-12 md:items-center gap-4 ${
+                       hasImpediment 
+                         ? (isDark ? 'bg-red-900/10 border-red-800/50 hover:bg-red-900/20 shadow-sm' : 'bg-red-50/50 border-red-100 hover:bg-red-100/50 shadow-sm')
+                         : (isDark ? 'bg-slate-900/50 border-slate-800 hover:bg-slate-800 hover:border-slate-700' : 'bg-white border-gray-100 hover:border-gray-200 hover:shadow-md')
+                     }`}
+                   >
+                     {isExportMode && (
+                       <div className="absolute top-4 right-4 md:static md:col-span-1 md:flex md:items-center">
+                         <input 
+                           type="checkbox" 
+                           className="w-5 h-5 rounded-md border-gray-300 text-[#003B95] focus:ring-[#003B95] cursor-pointer" 
+                           checked={selectedLaudos.includes(r.id)} 
+                           onChange={e => {
+                             if (e.target.checked) setSelectedLaudos([...selectedLaudos, r.id]);
+                             else setSelectedLaudos(selectedLaudos.filter(id => id !== r.id));
+                           }} 
+                         />
+                       </div>
+                     )}
 
-                       <button onClick={() => deleteLaudo(r.id)} className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100 hover:text-red-600'}`} title="Excluir">
-                          <Trash2 size={18} />
-                          <span className="text-[9px] font-bold mt-1 uppercase">Excluir</span>
-                       </button>
-                    </div>
-                 </div>
-                );
+                     <div className="col-span-1 flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm border shrink-0 ${isDark ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-gray-50 text-[#003B95] border-gray-100'}`}>
+                          {r.nota}
+                        </div>
+                        <div className="md:hidden">
+                           <h3 className={`text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{r.modelo}</h3>
+                           <div className="flex items-center gap-2 mt-0.5">
+                             <span className="font-mono text-xs font-bold opacity-60 uppercase tracking-wider">{r.placa}</span>
+                             <span className={`text-[9px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded ${r.class === 'SUCATA' ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                               {r.class}
+                             </span>
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="hidden md:block col-span-2">
+                       <div className={`font-mono text-sm font-black tracking-wider px-2 py-1 rounded inline-block ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-gray-50 text-gray-700'}`}>
+                         {r.placa}
+                       </div>
+                     </div>
+
+                     <div className="hidden md:block col-span-3">
+                       <h3 className={`text-sm font-bold truncate ${isDark ? 'text-slate-200' : 'text-gray-800'}`} title={r.modelo}>
+                         {r.modelo}
+                       </h3>
+                     </div>
+
+                     <div className="hidden md:block col-span-2">
+                       <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] uppercase tracking-widest border ${
+                         r.class === 'SUCATA' || hasImpediment 
+                           ? 'bg-red-500/5 border-red-500/20 text-red-500' 
+                           : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500'
+                       }`}>
+                         {r.class}
+                       </span>
+                     </div>
+
+                     <div className="col-span-4 flex items-center justify-end gap-2 mt-2 pt-2 md:mt-0 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-slate-800">
+                        <button onClick={() => { setLaudoData(r.fullData); setViewMode(true); setSourceTab(activeTab); setActiveTab('mimico'); }} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Visualizar">
+                           <Eye size={16} />
+                           <span className="hidden lg:inline text-[9px] font-black uppercase">Ver</span>
+                        </button>
+                        <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setSourceTab(activeTab); setActiveTab('mimico'); }} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
+                           <Pencil size={16} />
+                           <span className="hidden lg:inline text-[9px] font-black uppercase">Editar</span>
+                        </button>
+                        <button onClick={() => setViewingHistory(r.id)} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Histórico">
+                           <History size={16} />
+                           <span className="hidden lg:inline text-[9px] font-black uppercase">Histórico</span>
+                        </button>
+                        <button onClick={() => deleteLaudo(r.id)} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-red-900/20 border-red-800/50 text-red-400 hover:bg-red-800' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100'}`} title="Excluir">
+                           <Trash2 size={16} />
+                           <span className="hidden lg:inline text-[9px] font-black uppercase">Excluir</span>
+                        </button>
+                     </div>
+                   </div>
+                 );
                })}
-               {inspectedResults.length === 0 && (
-                 <div className={`col-span-full text-center py-24 border-2 border-dashed rounded-3xl ${isDark ? 'border-slate-800 bg-slate-900/30' : 'border-gray-200 bg-gray-50/50'}`}>
+
+               {filteredInspectedResults.length === 0 && (
+                 <div className={`text-center py-24 border-2 border-dashed rounded-3xl ${isDark ? 'border-slate-800 bg-slate-900/30' : 'border-gray-200 bg-gray-50/50'}`}>
                     <ClipboardList size={48} className={`mx-auto mb-4 opacity-30 ${isDark ? 'text-slate-500' : 'text-gray-400'}`} />
-                    <p className={`font-semibold ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Aguardando homologação de vistorias.</p>
+                    <p className={`font-semibold ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                      {dashboardSearchTerm ? 'Nenhum veículo encontrado para esta pesquisa.' : 'Aguardando homologação de vistorias.'}
+                    </p>
                  </div>
                )}
              </div>
+
            </div>
         )}
 
