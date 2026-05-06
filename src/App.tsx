@@ -757,25 +757,25 @@ const DashboardSummary = ({ frota, inspectedResults, isDark }: { frota: any[], i
 interface Vehicle {
   id: string;
   _ord?: any;
-  orgao?: string;
-  placa: string;
-  modelo: string;
-  tipo?: string;
-  avaliacao?: number | string;
-  chassi: string;
-  motor: string;
-  ano: string;
-  comb?: string;
-  patrimonio: string;
-  cor: string;
-  origem?: string;
-  renavam?: string;
-  fipe: number | string;
-  pctFipe?: number | string;
-  precoMinimo?: number | string;
-  situacaoDetran?: string;
-  endereco_patio?: string;
-  municipio: string;
+  orgao?: string; // ORGÃO
+  placa: string; // PLACA
+  modelo: string; // MARCA/MODELO
+  tipo?: string; // TIPO
+  avaliacao?: number | string; // AVALIAÇÃO
+  chassi: string; // CHASSI
+  motor: string; // NÚM. DO MOTOR
+  ano: string; // ANO
+  comb?: string; // COMB.
+  patrimonio: string; // PATRIMÔNIO
+  cor: string; // COR/DOC.
+  origem?: string; // ORIGEM
+  renavam?: string; // RENAVAM
+  fipe: number | string; // FIPE
+  pctFipe?: number | string; // % DA FIPE
+  precoMinimo?: number | string; // PREÇO MÍNIMO
+  situacaoDetran?: string; // SITUAÇÃO DETRAN
+  enderecoPatio?: string; // ENDEREÇO DO PÁTIO
+  municipio: string; // MUNICÍPIO
   uploadedAt?: any;
   uploadedBy?: string;
   uploadedByEmail?: string;
@@ -814,49 +814,47 @@ const DetailItem = ({ icon, label, value, isDark }: any) => (
   </div>
 );
 
+const parseCurrency = (val: any) => {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return val;
+  const clean = String(val).replace(/[^\d.,]/g, '').replace(',', '.');
+  const num = parseFloat(clean);
+  return isNaN(num) ? 0 : num;
+};
+
+const formatCurrency = (val: any) => {
+  if (val === undefined || val === null || val === '') return '-';
+  if (val === 0) return 'R$ 0,00';
+  const num = typeof val === 'string' ? parseCurrency(val) : val;
+  if (isNaN(num)) return '-';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
+};
+
+const formatPercent = (val: any) => {
+  if (val === undefined || val === null || val === '') return '-';
+  const num = typeof val === 'string' ? parseFloat(val) : val;
+  if (isNaN(num)) return '-';
+  return `${num.toFixed(0)}%`;
+};
+
+const formatDate = (date: any) => {
+  if (!date) return '-';
+  try {
+    if (typeof date === 'object' && date.seconds) {
+      return new Date(date.seconds * 1000).toLocaleString('pt-BR');
+    }
+    if (date.toDate) return date.toDate().toLocaleString('pt-BR');
+    return new Date(date).toLocaleString('pt-BR');
+  } catch {
+    return String(date);
+  }
+};
+
 const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspection, isDark, isVistoriado, inspectedResults }: any) => {
   if (!vehicle) return null;
 
   const inspection = inspectedResults.find((r: any) => r.placa === vehicle.placa);
   const hasImpediment = inspection?.hasImpediment || inspection?.class === 'IMPEDIMENTOS';
-
-  const formatDate = (date: any) => {
-    if (!date) return '-';
-    try {
-      if (typeof date === 'object' && date.seconds) {
-        return new Date(date.seconds * 1000).toLocaleString('pt-BR');
-      }
-      if (date.toDate) return date.toDate().toLocaleString('pt-BR');
-      return new Date(date).toLocaleString('pt-BR');
-    } catch {
-      return String(date);
-    }
-  };
-
-  const parseCurrency = (val: any) => {
-    if (val === undefined || val === null || val === '') return 0;
-    if (typeof val === 'number') return val;
-    const clean = String(val).replace(/[^\d.,]/g, '').replace(',', '.');
-    const num = parseFloat(clean);
-    return isNaN(num) ? 0 : num;
-  };
-
-  const formatCurrency = (val: any) => {
-    if (val === undefined || val === null || val === '') return '-';
-    if (val === 0) return 'R$ 0,00';
-    // Handle both numbers and strings with BRL format
-    const num = typeof val === 'string' ? parseCurrency(val) : val;
-    if (isNaN(num)) return '-';
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
-  };
-
-  const formatPercent = (val: any) => {
-    if (val === undefined || val === null || val === '') return '-';
-    const num = typeof val === 'string' ? parseFloat(val) : val;
-    if (isNaN(num)) return '-';
-    // valuationPercent is stored as a whole number (e.g. 15 for 15%)
-    return `${num.toFixed(0)}%`;
-  };
 
   // Calculate assessed values if inspection exists
   // valuationPercent is a number like 15, 25, 35, 50
@@ -1652,24 +1650,26 @@ const App = () => {
           const endereco = v.endereco ? `${v.endereco.rua || ''}, ${v.endereco.num || ''} - ${v.endereco.bairro || ''}`.replace(/^[,\s-]+|[,\s-]+$/g, '') : '';
 
           return {
-            'ORGÃO': 'CBMPR',
+            'ORGÃO': v.orgao || 'CBMPR',
             'PLACA': v.placa || '',
-            'MARCA/MODELO': `${(v as any).marca || ''} / ${v.modelo || ''}`.replace(/^ \/ | \/ $/g, ''),
-            'TIPO': (v as any).tipo || fullData.vehicle?.tipo || '',
+            'MARCA/MODELO': v.modelo || '',
+            'TIPO': v.tipo || fullData.assetType || '',
             'AVALIAÇÃO': laudo?.class || '',
             'CHASSI': v.chassi || '',
             'NÚM. DO MOTOR': v.motor || '',
-            'ANO': `${(v as any).ano_fabricacao || ''}/${(v as any).ano_modelo || v.ano || ''}`.replace(/^\/|\/$/g, ''),
-            'COMB.': (v as any).combustivel || '',
+            'ANO': v.ano || '',
+            'COMB.': v.comb || fullData.vehicle?.comb || '',
             'PATRIMÔNIO': v.patrimonio || '',
             'COR/DOC.': v.cor || '',
-            'ORIGEM': (v as any).origem || '',
-            'RENAVAM': (v as any).renavam || '',
-            'FIPE': formatCurrency(v.fipe as number | string),
-            '% DA FIPE': fullData.percentualFipe ? `${fullData.percentualFipe}%` : '',
-            'PREÇO MÍNIMO': formatCurrency(fullData.precoMinimo),
-            'SITUAÇÃO DETRAN': (v as any).situacao_detran || '',
-            'ENDEREÇO DO PÁTIO': endereco,
+            ' ': '', // Coluna L
+            '  ': '', // Coluna M
+            'ORIGEM': v.origem || '',
+            'RENAVAM': v.renavam || '',
+            'FIPE': formatCurrency(v.fipe),
+            '% DA FIPE': laudo?.valuationPercent ? `${laudo.valuationPercent}%` : '',
+            'PREÇO MÍNIMO': formatCurrency(laudo ? (parseCurrency(v.fipe) * ((laudo.valuationPercent || 0) / 100)) : 0),
+            'SITUAÇÃO DETRAN': v.situacaoDetran || 'REGULAR',
+            'ENDEREÇO DO PÁTIO': v.enderecoPatio || endereco,
             'MUNICÍPIO': v.municipio || ''
           };
         });
@@ -1858,15 +1858,25 @@ const App = () => {
             return {
               _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº']),
               id: `upload-${Date.now()}-${index}`,
+              orgao: getVal(row, ['orgao', 'unidade', 'secretaria', 'órgão']),
               placa: getVal(row, ['placa', 'prefixo', 'identificacao']),
-              modelo: getVal(row, ['modelo', 'veiculo', 'descricao', 'marca', 'especificacao']),
+              modelo: getVal(row, ['modelo', 'veiculo', 'descricao', 'marca', 'especificacao', 'marca/modelo']),
+              tipo: getVal(row, ['tipo', 'categoria']),
+              avaliacao: getVal(row, ['avaliacao', 'valor avaliado', 'preco', 'avaliação']),
               fipe: typeof rawFipe === 'number' ? rawFipe : parseFloat(String(rawFipe).replace(/[^\d.,]/g, '').replace(',', '.') || '0'),
               chassi: getVal(row, ['chassi', 'chassis', 'serie']),
-              motor: getVal(row, ['motor', 'n motor', 'numero motor']),
+              motor: getVal(row, ['motor', 'n motor', 'numero motor', 'núm. do motor']),
               municipio: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao']),
-              cor: getVal(row, ['cor', 'pintura']),
+              cor: getVal(row, ['cor', 'pintura', 'cor/doc', 'cor/doc.']),
               ano: getVal(row, ['ano', 'fabricacao', 'ano/mod']),
-              patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio']),
+              comb: getVal(row, ['comb', 'comb.', 'combustivel', 'combustível']),
+              origem: getVal(row, ['origem']),
+              renavam: getVal(row, ['renavam']),
+              pctFipe: getVal(row, ['% fipe', 'percentual fipe', 'pct fipe', '% da fipe']),
+              precoMinimo: getVal(row, ['preco minimo', 'preco_minimo', 'valor minimo', 'preço mínimo']),
+              situacaoDetran: getVal(row, ['situacao detran', 'situacao_detran', 'detran', 'situação detran']),
+              patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio']),
+              enderecoPatio: rawEnderecoCombo || getVal(row, ['endereco do patio', 'endereco patio', 'localizacao', 'endereço do pátio']),
               endereco: {
                 rua: extractedRua || getVal(row, ['rua', 'logradouro', 'endereco', 'endereço']),
                 num: extractedNum || getVal(row, ['num', 'numero', 'nº', 'número'], /\b(motor|chassi|patrimonio|serie)\b/),
@@ -2190,9 +2200,17 @@ const App = () => {
         notes: laudoData.id ? 'Atualização do laudo' : 'Criação do laudo'
       };
 
+      const updatedVehicle = {
+        ...laudoData.vehicle,
+        renavam: laudoData.vehicle.renavam || '',
+        comb: laudoData.vehicle.comb || '',
+        origem: laudoData.vehicle.origem || '',
+        situacaoDetran: laudoData.vehicle.situacaoDetran || 'REGULAR'
+      };
+
       const inspectionData: any = {
-        placa: laudoData.vehicle.placa,
-        modelo: laudoData.vehicle.modelo,
+        placa: updatedVehicle.placa,
+        modelo: updatedVehicle.modelo,
         nota: totalScore,
         class: calculatedClass,
         valuationPercent: valuationPercent,
@@ -2200,7 +2218,7 @@ const App = () => {
         impedimentCount: impediments.length,
         impediments: impediments.map((i: any) => i.label),
         data: laudoData.date,
-        fullData: laudoData,
+        fullData: { ...laudoData, vehicle: updatedVehicle },
         inspectedAt: serverTimestamp(),
         inspectedBy: user!.uid,
         inspectedByEmail: user!.email || 'unknown',
@@ -2212,6 +2230,19 @@ const App = () => {
         await updateDoc(docRef, inspectionData);
       } else {
         await addDoc(collection(db, "inspections"), inspectionData);
+      }
+
+      // Update master vehicle record
+      if (updatedVehicle.id && !updatedVehicle.id.startsWith('upload-')) {
+        const vRef = doc(db, "vehicles", updatedVehicle.id);
+        const vToUpdate = { ...updatedVehicle };
+        delete (vToUpdate as any).id;
+        delete (vToUpdate as any)._ord;
+        delete (vToUpdate as any).uploadedAt;
+        delete (vToUpdate as any).uploadedBy;
+        delete (vToUpdate as any).uploadedByEmail;
+        
+        await updateDoc(vRef, vToUpdate);
       }
 
       fetchInitialData();
@@ -3316,6 +3347,31 @@ const App = () => {
                                    value={laudoData.vehicle.km || ''}
                                    onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, km: e.target.value}})}
                                  />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Renavam</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium font-mono ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.renavam || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, renavam: e.target.value}})}
+                                   placeholder="Informe o RENAVAM"
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Combustível</span>
+                                 <select 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.comb || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, comb: e.target.value}})}
+                                 >
+                                   <option value="">Selecione...</option>
+                                   <option value="GASOLINA">GASOLINA</option>
+                                   <option value="ÁLCOOL">ÁLCOOL</option>
+                                   <option value="FLEX">FLEX</option>
+                                   <option value="DIESEL">DIESEL</option>
+                                   <option value="GNV">GNV</option>
+                                   <option value="ELÉTRICO">ELÉTRICO</option>
+                                 </select>
                                </div>
                                <div>
                                  <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Ano Fab./Mod.</span>

@@ -2,25 +2,25 @@
 export interface Vehicle {
   id: string;
   _ord?: number | string;
-  orgao?: string;
-  placa: string;
-  modelo: string;
-  tipo?: string;
-  avaliacao?: number | string;
-  chassi: string;
-  motor: string;
-  ano: string;
-  comb?: string;
-  patrimonio: string;
-  cor: string;
-  origem?: string;
-  renavam?: string;
-  fipe: number | string;
-  pctFipe?: number | string;
-  precoMinimo?: number | string;
-  situacaoDetran?: string;
-  endereco_patio?: string;
-  municipio: string;
+  orgao?: string; // ORGÃO
+  placa: string; // PLACA
+  modelo: string; // MARCA/MODELO
+  tipo?: string; // TIPO
+  avaliacao?: number | string; // AVALIAÇÃO
+  chassi: string; // CHASSI
+  motor: string; // NÚM. DO MOTOR
+  ano: string; // ANO
+  comb?: string; // COMB.
+  patrimonio: string; // PATRIMÔNIO
+  cor: string; // COR/DOC.
+  origem?: string; // ORIGEM
+  renavam?: string; // RENAVAM
+  fipe: number | string; // FIPE
+  pctFipe?: number | string; // % DA FIPE
+  precoMinimo?: number | string; // PREÇO MÍNIMO
+  situacaoDetran?: string; // SITUAÇÃO DETRAN
+  enderecoPatio?: string; // ENDEREÇO DO PÁTIO
+  municipio: string; // MUNICÍPIO
   uploadedAt?: { toMillis: () => number } | null; // Firestore Timestamp
   uploadedBy?: string;
   uploadedByEmail?: string;
