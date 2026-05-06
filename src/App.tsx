@@ -20,7 +20,7 @@ import {
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
   Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
-  Truck, Bus, Anchor, Plane, Hash, Calendar, Info
+  Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -1180,8 +1180,10 @@ const App = () => {
   const [bulkExporting, setBulkExporting] = useState(false);
   const [loadingTask, setLoadingTask] = useState<{ type: 'inclusion' | 'exclusion' | 'loading'; message?: string; progress?: number } | null>(null);
   const [isExportMode, setIsExportMode] = useState(false);
-  const [statusFilter] = useState<'todos' | 'vistoriados' | 'pendentes'>('todos');
-  const [brandFilter] = useState<string>('todos');
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'vistoriados' | 'pendentes' | 'impedidos'>('todos');
+  const [brandFilter, setBrandFilter] = useState<string>('todos');
+  const [modelFilter, setModelFilter] = useState<string>('todos');
+  const [uploaderFilter] = useState<string>('todos');
   const [cropImage, setCropImage] = useState<{ src: string, type: 'chassis'|'motor' } | null>(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -1190,10 +1192,46 @@ const App = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
-  const [uploaderFilter] = useState<string>('todos');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [viewingHistory, setViewingHistory] = useState<string | null>(null);
   const [selectedYard, setSelectedYard] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      console.log('beforeinstallprompt event fired');
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+    setDeferredPrompt(null);
+  };
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     if (isMenuOpen) {
@@ -1455,14 +1493,17 @@ const App = () => {
   const impededPlacaSet = new Set(inspectedResults.filter((r: any) => r.class === 'IMPEDIMENTOS' || r.hasImpediment).map((r: any) => r.placa));
 
   const filteredFrotaFinal = frota.filter(v => {
+    if (selectedYard && (v.municipio || '').toUpperCase() !== selectedYard) return false;
+
     const matchesSearch = v.placa.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           v.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           v.municipio.toLowerCase().includes(searchTerm.toLowerCase());
     if (!matchesSearch) return false;
 
     const isVistoriado = evaluatedPlacaSet.has(v.placa);
-    if (statusFilter === 'vistoriados' && !isVistoriado) return false;
+    if (statusFilter === 'vistoriados' && (!isVistoriado || impededPlacaSet.has(v.placa))) return false;
     if (statusFilter === 'pendentes' && isVistoriado) return false;
+    if (statusFilter === 'impedidos' && !impededPlacaSet.has(v.placa)) return false;
 
     if (uploaderFilter !== 'todos') {
       const uploader = v.uploadedByEmail || 'Desconhecido';
@@ -1472,6 +1513,10 @@ const App = () => {
     if (brandFilter !== 'todos') {
       const brand = v.modelo.split(' ')[0].toLowerCase();
       if (brand !== brandFilter.toLowerCase()) return false;
+    }
+
+    if (modelFilter !== 'todos') {
+      if (v.modelo.toLowerCase() !== modelFilter.toLowerCase()) return false;
     }
 
     return true;
@@ -1492,6 +1537,27 @@ const App = () => {
     return sortOrder === 'asc' ? comparison : -comparison;
   });
   console.log('Frotas filtradas:', filteredFrotaFinal.length);
+
+  const availableBrands = useMemo(() => {
+    const list = selectedYard 
+      ? frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard)
+      : frota;
+    const brands = new Set(list.map(v => v.modelo.split(' ')[0].toUpperCase()));
+    return Array.from(brands).sort();
+  }, [frota, selectedYard]);
+
+  const availableModels = useMemo(() => {
+    let list = selectedYard 
+      ? frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard)
+      : frota;
+    
+    if (brandFilter !== 'todos') {
+      list = list.filter(v => v.modelo.split(' ')[0].toUpperCase() === brandFilter.toUpperCase());
+    }
+    
+    const models = new Set(list.map(v => v.modelo.toUpperCase()));
+    return Array.from(models).sort();
+  }, [frota, selectedYard, brandFilter]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
@@ -2504,13 +2570,29 @@ const App = () => {
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 lg:space-x-3">
-          <button 
-            onClick={toggleTheme} 
-            className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
-          >
-             {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
+          <div className="flex items-center space-x-2 lg:space-x-4">
+            {/* Status Offline/Online */}
+            <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all ${isOnline ? (isDark ? 'bg-emerald-900/20 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-100 text-emerald-700') : (isDark ? 'bg-amber-900/30 border-amber-500/30 text-amber-500 animate-pulse' : 'bg-amber-50 border-amber-100 text-amber-700 animate-pulse')}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              <span className="hidden sm:inline">{isOnline ? 'Conectado' : 'Modo Offline'}</span>
+            </div>
+
+            {deferredPrompt && (
+              <button 
+                onClick={handleInstallClick}
+                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${isDark ? 'bg-amber-500 text-slate-900 hover:bg-amber-400' : 'bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-500/20'}`}
+              >
+                <Smartphone size={14} />
+                <span className="hidden md:inline">Instalar App</span>
+              </button>
+            )}
+
+            <button 
+              onClick={toggleTheme} 
+              className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+            >
+               {isDark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
 
           {activeTab === 'wizard' && laudoData && (
             <button 
@@ -2762,10 +2844,10 @@ const App = () => {
                            <input 
                              type="checkbox"
                              onChange={(e) => {
-                               if (e.target.checked) setSelectedVehicles(frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard).map(v => v.id || ''));
+                               if (e.target.checked) setSelectedVehicles(filteredFrotaFinal.map(v => v.id || ''));
                                else setSelectedVehicles([]);
                              }}
-                             checked={selectedVehicles.length > 0 && selectedVehicles.length === frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard).length}
+                             checked={selectedVehicles.length > 0 && selectedVehicles.length === filteredFrotaFinal.length}
                              className="w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-600"
                            />
                            <span className="text-sm font-semibold text-gray-600 dark:text-gray-300 hidden sm:inline">Todos</span>
@@ -2775,23 +2857,61 @@ const App = () => {
                         <button onClick={() => { setIsDeleteMode(false); setSelectedVehicles([]); }} className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors shadow-sm ${isDark ? 'bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white' : 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-700'}`}>Cancelar</button>
                       </div>
                     ) : (
-                      <>
-                        <div className={`relative flex items-center px-4 h-12 w-full rounded-2xl border shadow-sm ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+                      <div className="flex flex-wrap items-center gap-3 w-full">
+                        <div className={`relative flex items-center px-4 h-12 flex-1 min-w-[240px] rounded-2xl border shadow-sm ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
                           <Search size={18} className="text-gray-400 mr-3 shrink-0" />
                           <input 
                             type="text" 
-                            placeholder="Buscar placa ou modelo no pátio..." 
+                            placeholder="Buscar placa ou modelo..." 
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             className="bg-transparent border-none outline-none w-full text-base sm:text-sm placeholder:text-gray-400 text-gray-900 dark:text-white"
                           />
                         </div>
+
+                        <div className={`flex items-center h-12 rounded-2xl border shadow-sm px-3 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-700'}`}>
+                          <Filter size={16} className="text-gray-400 mr-2" />
+                          <select 
+                            value={statusFilter} 
+                            onChange={(e) => setStatusFilter(e.target.value as any)}
+                            className="bg-transparent border-none outline-none text-sm font-semibold cursor-pointer"
+                          >
+                            <option value="todos">Status: Todos</option>
+                            <option value="pendentes">Pendentes</option>
+                            <option value="vistoriados">Vistoriados</option>
+                            <option value="impedidos">Impedidos</option>
+                          </select>
+                        </div>
+
+                        <div className={`flex items-center h-12 rounded-2xl border shadow-sm px-3 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-700'}`}>
+                          <CarFront size={16} className="text-gray-400 mr-2" />
+                          <select 
+                            value={brandFilter} 
+                            onChange={(e) => { setBrandFilter(e.target.value); setModelFilter('todos'); }}
+                            className="bg-transparent border-none outline-none text-sm font-semibold cursor-pointer max-w-[120px]"
+                          >
+                            <option value="todos">Marca: Todas</option>
+                            {availableBrands.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </div>
+
+                        <div className={`flex items-center h-12 rounded-2xl border shadow-sm px-3 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-700'}`}>
+                          <Tag size={16} className="text-gray-400 mr-2" />
+                          <select 
+                            value={modelFilter} 
+                            onChange={(e) => setModelFilter(e.target.value)}
+                            className="bg-transparent border-none outline-none text-sm font-semibold cursor-pointer max-w-[150px]"
+                          >
+                            <option value="todos">Modelo: Todos</option>
+                            {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </div>
                         
-                        <div className={`flex items-center h-12 rounded-2xl border shadow-sm px-2 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
+                        <div className={`flex items-center h-12 rounded-2xl border shadow-sm px-2 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-700'}`}>
                           <select 
                             value={sortField} 
                             onChange={(e) => setSortField(e.target.value)}
-                            className={`bg-transparent border-none outline-none text-sm font-semibold cursor-pointer ${isDark ? 'text-white' : 'text-gray-700'}`}
+                            className="bg-transparent border-none outline-none text-sm font-semibold cursor-pointer"
                           >
                             <option value="">Ordenar</option>
                             <option value="modelo">Modelo</option>
@@ -2806,21 +2926,19 @@ const App = () => {
                           </button>
                         </div>
   
-                        {frota.length > 0 && (
+                        {filteredFrotaFinal.length > 0 && frota.length > 0 && (
                           <button onClick={() => setIsDeleteMode(true)} className={`flex items-center justify-center p-3 md:px-4 h-12 rounded-2xl border shadow-sm transition-colors ${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-red-400' : 'bg-white border-gray-200 hover:bg-red-50 text-red-500'}`} title="Gerenciar Lote">
                             <Trash2 size={18} />
                           </button>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                 </header>
 
                 <div className="space-y-3">
-                  {frota
-                    .filter(v => (v.municipio || '').toUpperCase() === selectedYard)
-                    .filter(v => v.placa?.toLowerCase().includes(searchTerm.toLowerCase()) || v.modelo?.toLowerCase().includes(searchTerm.toLowerCase()))
-                    .map((v, i) => {
+                  {filteredFrotaFinal.length > 0 ? (
+                    filteredFrotaFinal.map((v, i) => {
                       const isVistoriado = evaluatedPlacaSet.has(v.placa);
                       const hasImpediment = impededPlacaSet.has(v.placa);
                       return (
@@ -2900,7 +3018,13 @@ const App = () => {
                           </div>
                         </div>
                       );
-                    })}
+                    })
+                  ) : (
+                    <div className={`p-20 text-center rounded-3xl border border-dashed ${isDark ? 'bg-slate-900/50 border-slate-800 text-slate-500' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
+                      <Filter size={48} className="mx-auto mb-4 opacity-20" />
+                      <p className="font-bold uppercase tracking-widest text-xs">Nenhum veículo encontrado com os filtros aplicados</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
