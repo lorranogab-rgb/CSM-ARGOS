@@ -18,7 +18,7 @@ import {
   ChevronRight, ChevronLeft, Shield, ShieldCheck, Home,
   Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
-  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
+  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check, Coins,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
   Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone
 } from 'lucide-react';
@@ -1098,16 +1098,28 @@ const App = () => {
   const dashboardStats = useMemo(() => {
     const total = inspectedResults.length;
     
-    // Soma do valor FIPE apenas para veículos sem impedimentos
-    const totalRevenue = inspectedResults.reduce((acc, r) => {
-      if (!r.hasImpediment && r.minFipe) {
-        return acc + r.minFipe;
+    // Cálculo de valores totais
+    let totalMarketValue = 0; // Soma total das FIPEs
+    let totalRevenue = 0;      // Soma total dos Preços Mínimos (FIPE * %)
+
+    inspectedResults.forEach(r => {
+      const vehicle = r.fullData?.vehicle;
+      if (!vehicle) return;
+
+      const fipePrice = parseCurrency(vehicle.fipe);
+      const valPercent = r.valuationPercent || 0;
+      const minPrice = fipePrice * (valPercent / 100);
+
+      totalMarketValue += fipePrice;
+
+      if (!r.hasImpediment && r.class !== 'IMPEDIMENTOS') {
+        totalRevenue += minPrice;
       }
-      return acc;
-    }, 0);
+    });
     
     return {
       total,
+      totalMarketValue,
       totalRevenue
     };
   }, [inspectedResults]);
@@ -4147,7 +4159,7 @@ const App = () => {
              </div>
 
              {/* Dashboard Metrics Section */}
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10 px-4 md:px-0">
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10 px-4 md:px-0">
                <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
                  <div className="flex items-center justify-between mb-4">
                    <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500 font-black">
@@ -4160,17 +4172,30 @@ const App = () => {
                </div>
 
                <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
-                 <div className="flex items-center justify-between mb-4">
-                   <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500 font-black">
-                     <Zap size={24} />
-                   </div>
-                   <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">Valor de Mercado</span>
-                 </div>
-                 <div className="text-4xl font-black tracking-tighter mb-1">
-                   {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(dashboardStats.totalRevenue)}
-                 </div>
-                 <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Arrecadação Mínima (FIPE s/ impedimentos)</div>
-               </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-2 bg-amber-500/10 rounded-xl text-amber-500 font-black">
+                      <Coins size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">Mercado</span>
+                  </div>
+                  <div className="text-4xl font-black tracking-tighter mb-1">
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(dashboardStats.totalMarketValue)}
+                  </div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Valor de Mercado Total (FIPE)</div>
+                </div>
+
+                <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500 font-black">
+                      <Zap size={24} />
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">Arrecadação</span>
+                  </div>
+                  <div className="text-4xl font-black tracking-tighter mb-1">
+                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(dashboardStats.totalRevenue)}
+                  </div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Arrecadação Mínima Estimada</div>
+                </div>
              </div>
 
              <div className="flex flex-col space-y-2">
