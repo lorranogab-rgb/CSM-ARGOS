@@ -18,9 +18,10 @@ import {
   ChevronRight, ChevronLeft, Shield, ShieldCheck, Home,
   Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
-  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check, Coins,
+  Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
-  Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone
+  Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone,
+  Coins as CoinsIcon
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -2292,14 +2293,17 @@ const App = () => {
         
         <div className={`relative z-10 w-full max-w-md p-10 rounded-3xl shadow-2xl border ${isDark ? 'bg-slate-900/80 backdrop-blur-xl border-slate-800 shadow-black/50' : 'bg-white/80 backdrop-blur-xl border-gray-200 shadow-blue-900/5'}`}>
           <div className="flex justify-center mb-6">
-            <div className={`w-20 h-20 rounded-2xl flex flex-col items-center justify-center shadow-inner border ${isDark ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-white to-gray-50 border-gray-200'}`}>
-              <Eye size={36} className={`mb-1 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`} />
-              <span className={`text-[10px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Argos</span>
+            <div className={`w-24 h-24 rounded-3xl flex flex-col items-center justify-center shadow-2xl border-2 relative overflow-hidden ${isDark ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-red-600 to-red-800 border-red-900'}`}>
+              <Eye size={40} className={`mb-1 drop-shadow-lg ${isDark ? 'text-amber-500' : 'text-amber-400'}`} />
+              <div className="flex flex-col items-center leading-none">
+                <span className={`text-[11px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-slate-300' : 'text-white'}`}>CSM:ARGOS</span>
+                <span className={`text-[7px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-red-500' : 'text-white/80'}`}>CBMPR</span>
+              </div>
             </div>
           </div>
           
-          <h1 className="text-3xl font-black tracking-tighter mb-2">SISTEMA ARGOS</h1>
-          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}>Controle de Frota Operacional</h2>
+          <h1 className="text-3xl font-black tracking-tighter mb-2 italic">CSM:ARGOS</h1>
+          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-red-500' : 'text-red-700'}`}>Gestão Automatizada</h2>
           
           <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
             <div>
@@ -2550,10 +2554,10 @@ const App = () => {
       <aside className={`fixed lg:static inset-y-0 left-0 w-72 lg:w-64 h-full flex flex-col border-r transition-transform duration-300 z-[120] lg:translate-x-0 ${isMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-xl lg:shadow-none'}`}>
         <div className="p-6 flex items-center justify-between lg:hidden border-b border-gray-100 dark:border-slate-800 mb-2">
            <div className="flex items-center space-x-3">
-              <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-amber-500' : 'bg-[#003B95] text-white'}`}>
+              <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-amber-500' : 'bg-red-600 text-white'}`}>
                  <Eye size={18} strokeWidth={2.5} />
               </div>
-              <span className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>ARGOS</span>
+              <span className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
            </div>
            <button onClick={() => setIsMenuOpen(false)} className={`p-2 rounded-lg ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}>
               <X size={20} />
@@ -2634,12 +2638,12 @@ const App = () => {
               <span className="text-[10px] font-black tracking-widest uppercase">Menu</span>
             </button>
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
-              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-[#003B95] text-white border-[#002868] border-b-amber-400'}`}>
+              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 relative ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-red-600 text-white border-red-800 border-b-amber-400 shadow-red-900/20'}`}>
                 <Eye size={24} strokeWidth={2.5} />
               </div>
               <div className="flex flex-col">
-                <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>ARGOS</span>
-                <span className={`text-xs lg:text-xs font-bold tracking-[0.2em] uppercase ${isDark ? 'text-amber-500' : 'text-[#003B95]'}`}>Avaliação automatizada</span>
+                <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
+                <span className={`text-[10px] lg:text-[11px] font-bold tracking-[0.1em] uppercase ${isDark ? 'text-amber-500' : 'text-red-600'}`}>Gestão Automatizada</span>
               </div>
             </div>
           </div>
@@ -2689,7 +2693,7 @@ const App = () => {
                   Olá, {user?.displayName?.split(' ')[0] || 'Avaliador'}
                 </h1>
                 <p className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                  Bem-vindo ao centro de comando Argos. Aqui está o resumo das suas operações.
+                  Bem-vindo ao centro de comando CSM:ARGOS. Aqui está o resumo das suas operações.
                 </p>
              </div>
 
@@ -2749,7 +2753,7 @@ const App = () => {
                   <div className={`p-6 rounded-3xl border ${isDark ? 'bg-gradient-to-br from-indigo-900/20 to-slate-900 border-slate-800' : 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-700 shadow-xl shadow-blue-900/20'}`}>
                     <div className="flex items-center space-x-2 text-white/90 mb-3">
                        <Zap size={16} fill="white" className="text-amber-300" />
-                       <span className="text-[10px] font-black uppercase tracking-widest">Dica Argos</span>
+                       <span className="text-[10px] font-black uppercase tracking-widest">Dica ARGOS</span>
                     </div>
                     <p className="text-white text-xs font-medium leading-relaxed">
                       Lembre-se de anexar no mínimo 4 fotos por veículo para garantir a precisão do laudo automatizado via IA.
@@ -4174,7 +4178,7 @@ const App = () => {
                <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
                   <div className="flex items-center justify-between mb-4">
                     <div className="p-2 bg-amber-500/10 rounded-xl text-amber-500 font-black">
-                      <Coins size={24} />
+                      <CoinsIcon size={24} />
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">Mercado</span>
                   </div>
