@@ -10,13 +10,14 @@ import Cropper from 'react-easy-crop';
 import { getCroppedImg } from './lib/cropUtils';
 import { LoadingArgos } from './components/LoadingArgos';
 import { SpreadsheetEditor } from './components/SpreadsheetEditor';
+import { UserProfile } from './components/UserProfile';
 import { 
   Car, LayoutDashboard, Database, Trash2, FileText, 
   RotateCw, 
   UploadCloud, Eye, Camera,
   Search, CheckCircle,
   ChevronRight, ChevronLeft, Shield, ShieldCheck, Home,
-  Activity, LogOut, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
+  Activity, LogIn, Sun, Moon, Users, Gauge, Cog, Settings,
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
   Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
@@ -28,7 +29,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, where, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
 
 // --- CONSTANTES GLOBAIS ---
@@ -1086,15 +1087,23 @@ const App = () => {
   const [acceptResponsibility, setAcceptResponsibility] = useState(false);
   const [inspectedResults, setInspectedResults] = useState<Inspection[]>([]);
   const [dashboardSearchTerm, setDashboardSearchTerm] = useState('');
+  const [dashboardFilterClass, setDashboardFilterClass] = useState('TODOS');
 
   const filteredInspectedResults = useMemo(() => {
-    if (!dashboardSearchTerm.trim()) return inspectedResults;
+    let results = inspectedResults;
+    
+    if (dashboardFilterClass !== 'TODOS') {
+      results = results.filter(r => r.class === dashboardFilterClass);
+    }
+    
+    if (!dashboardSearchTerm.trim()) return results;
+    
     const term = dashboardSearchTerm.toLowerCase();
-    return inspectedResults.filter(r => 
+    return results.filter(r => 
       r.placa.toLowerCase().includes(term) || 
       r.modelo.toLowerCase().includes(term)
     );
-  }, [inspectedResults, dashboardSearchTerm]);
+  }, [inspectedResults, dashboardSearchTerm, dashboardFilterClass]);
 
   const dashboardStats = useMemo(() => {
     const total = inspectedResults.length;
@@ -1409,6 +1418,10 @@ const App = () => {
       setAuthReady(true);
       if (u) {
         fetchInitialData(u.uid, u.email || undefined);
+      } else {
+        setFrota(INITIAL_FROTA);
+        setInspectedResults([]);
+        setActiveTab('inicio');
       }
     });
     return () => unsubscribe();
@@ -1449,17 +1462,6 @@ const App = () => {
       } else {
         setAuthError("Erro na autenticação: " + e.message);
       }
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await signOut(auth);
-      setFrota(INITIAL_FROTA);
-      setInspectedResults([]);
-      setActiveTab('inicio');
-    } catch (e) {
-      console.error("Logout error:", e);
     }
   };
 
@@ -2292,18 +2294,14 @@ const App = () => {
         <div className={`absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b ${isDark ? 'from-blue-900/20 to-transparent' : 'from-[#003B95]/10 to-transparent'} pointer-events-none`} />
         
         <div className={`relative z-10 w-full max-w-md p-10 rounded-3xl shadow-2xl border ${isDark ? 'bg-slate-900/80 backdrop-blur-xl border-slate-800 shadow-black/50' : 'bg-white/80 backdrop-blur-xl border-gray-200 shadow-blue-900/5'}`}>
-          <div className="flex justify-center mb-6">
-            <div className={`w-24 h-24 rounded-3xl flex flex-col items-center justify-center shadow-2xl border-2 relative overflow-hidden ${isDark ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-red-600 to-red-800 border-red-900'}`}>
-              <Eye size={40} className={`mb-1 drop-shadow-lg ${isDark ? 'text-amber-500' : 'text-amber-400'}`} />
-              <div className="flex flex-col items-center leading-none">
-                <span className={`text-[11px] font-black tracking-[0.2em] uppercase ${isDark ? 'text-slate-300' : 'text-white'}`}>CSM:ARGOS</span>
-                <span className={`text-[7px] font-bold uppercase tracking-widest mt-1 ${isDark ? 'text-red-500' : 'text-white/80'}`}>CBMPR</span>
-              </div>
+          <div className="flex justify-center mb-8">
+            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-2xl border-2 transition-all ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-blue-50'}`}>
+              <Eye size={48} className={isDark ? 'text-blue-400' : 'text-[#003B95]'} />
             </div>
           </div>
           
           <h1 className="text-3xl font-black tracking-tighter mb-2 italic">CSM:ARGOS</h1>
-          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-red-500' : 'text-red-700'}`}>Gestão Automatizada</h2>
+          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
           
           <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
             <div>
@@ -2554,7 +2552,7 @@ const App = () => {
       <aside className={`fixed lg:static inset-y-0 left-0 w-72 lg:w-64 h-full flex flex-col border-r transition-transform duration-300 z-[120] lg:translate-x-0 ${isMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-xl lg:shadow-none'}`}>
         <div className="p-6 flex items-center justify-between lg:hidden border-b border-gray-100 dark:border-slate-800 mb-2">
            <div className="flex items-center space-x-3">
-              <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-amber-500' : 'bg-red-600 text-white'}`}>
+              <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-blue-400' : 'bg-white border border-blue-100 text-[#003B95]'}`}>
                  <Eye size={18} strokeWidth={2.5} />
               </div>
               <span className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
@@ -2564,7 +2562,15 @@ const App = () => {
            </button>
         </div>
 
-        <div className="hidden lg:block h-8"></div>
+        <div className="hidden lg:flex flex-col items-center justify-center pt-10 pb-6">
+           <div className={`w-14 h-14 flex items-center justify-center rounded-[1.25rem] shadow-xl mb-4 transition-transform hover:scale-105 active:scale-95 cursor-pointer ${isDark ? 'bg-slate-800 text-blue-400' : 'bg-white border border-blue-50 text-[#003B95]'}`}>
+              <Eye size={32} strokeWidth={2.5} />
+           </div>
+           <div className="text-center">
+             <span className={`text-xl font-black tracking-tighter ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
+             <div className="h-1 w-8 bg-blue-500 mx-auto mt-1 rounded-full opacity-50"></div>
+           </div>
+        </div>
         
         <nav className="flex-1 flex flex-col p-4 space-y-1.5">
           <button 
@@ -2598,30 +2604,26 @@ const App = () => {
             <ShieldCheck size={20} />
             <span className="text-sm text-left">Laudos Prontos</span>
           </button>
-          
+
           <div className="pt-8 mt-auto flex flex-col space-y-4">
-             <div className="px-3 py-4 rounded-2xl bg-gray-50 dark:bg-slate-800/40 border border-gray-100 dark:border-slate-800/60">
-                <div className="flex items-center space-x-3 mb-2">
+             <button 
+                onClick={() => { setActiveTab('perfil'); setIsMenuOpen(false); }}
+                className={`text-left px-3 py-4 rounded-2xl transition-all w-full group outline-none ${activeTab === 'perfil' ? (isDark ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-gray-200 shadow-sm') : (isDark ? 'bg-transparent border border-transparent hover:bg-slate-800/40 hover:border-slate-800/60' : 'bg-transparent border border-transparent hover:bg-gray-50 hover:border-gray-200')}`}
+             >
+                <div className="flex items-center space-x-3">
                    {user?.photoURL ? (
-                     <img src={user.photoURL} alt="User" referrerPolicy="no-referrer" className="w-10 h-10 rounded-xl border-2 border-white dark:border-slate-700 shadow-sm" />
+                     <img src={user.photoURL} alt="User" referrerPolicy="no-referrer" className={`w-10 h-10 rounded-xl border-2 shadow-sm transition-transform group-hover:scale-105 ${activeTab === 'perfil' ? (isDark ? 'border-amber-500' : 'border-amber-500') : (isDark ? 'border-slate-700' : 'border-white')}`} />
                    ) : (
-                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md">
+                     <div className={`w-10 h-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white shadow-md transition-transform group-hover:scale-105 ${activeTab === 'perfil' ? 'from-amber-400 to-orange-500' : 'from-blue-500 to-indigo-600'}`}>
                         <span className="font-black text-sm">{user?.email?.[0]?.toUpperCase()}</span>
                      </div>
                    )}
                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-200' : 'text-gray-900'}`}>{user?.displayName || 'Usuário'}</p>
-                      <p className={`text-[10px] uppercase tracking-tighter opacity-60 truncate ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{user?.email}</p>
+                      <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-200 group-hover:text-white' : 'text-gray-900'}`}>{user?.displayName || 'Usuário'}</p>
+                      <p className={`text-[10px] uppercase tracking-tighter truncate ${isDark ? 'text-slate-400 group-hover:text-slate-300' : 'text-gray-500 group-hover:text-gray-600'}`}>{user?.email}</p>
                    </div>
                 </div>
-                <button 
-                  onClick={logout} 
-                  className={`w-full flex items-center justify-center space-x-2 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors text-xs font-bold uppercase tracking-widest mt-2`}
-                >
-                   <LogOut size={16} />
-                   <span>Sair da Conta</span>
-                </button>
-             </div>
+             </button>
           </div>
         </nav>
       </aside>
@@ -2638,12 +2640,12 @@ const App = () => {
               <span className="text-[10px] font-black tracking-widest uppercase">Menu</span>
             </button>
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
-              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 relative ${isDark ? 'bg-slate-800 text-amber-500 border-slate-900 border-b-amber-500' : 'bg-red-600 text-white border-red-800 border-b-amber-400 shadow-red-900/20'}`}>
+              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 relative ${isDark ? 'bg-slate-800 text-blue-400 border-slate-900 border-b-blue-500' : 'bg-white text-[#003B95] border-blue-900 border-b-blue-400 shadow-blue-900/10'}`}>
                 <Eye size={24} strokeWidth={2.5} />
               </div>
               <div className="flex flex-col">
                 <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
-                <span className={`text-[10px] lg:text-[11px] font-bold tracking-[0.1em] uppercase ${isDark ? 'text-amber-500' : 'text-red-600'}`}>Gestão Automatizada</span>
+                <span className={`text-[10px] lg:text-[11px] font-bold tracking-[0.1em] uppercase ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</span>
               </div>
             </div>
           </div>
@@ -3023,7 +3025,7 @@ const App = () => {
                         <div 
                           key={v.id || i} 
                           onClick={() => handleYardVehicleClick(v)}
-                          className={`p-4 rounded-2xl border flex items-center justify-between gap-4 transition-all duration-300 cursor-pointer group/card ${
+                          className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all duration-300 cursor-pointer group/card ${
                             hasImpediment 
                               ? (isDark ? 'bg-red-900/10 border-red-800/80 hover:bg-red-900/20 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : 'bg-red-50 border-red-200 hover:bg-red-100 shadow-[0_0_15px_rgba(239,68,68,0.1)]')
                               : isVistoriado 
@@ -3031,7 +3033,7 @@ const App = () => {
                                 : (isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50' : 'bg-white border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200')
                           }`}
                         >
-                          <div className="flex items-center gap-4 flex-1">
+                          <div className="flex items-center gap-4 flex-1 w-full min-w-0">
                             {isDeleteMode && (
                               <input 
                                 type="checkbox" 
@@ -3073,7 +3075,7 @@ const App = () => {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0 justify-end shrink-0">
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -3089,7 +3091,7 @@ const App = () => {
                                 e.stopPropagation();
                                 handleYardVehicleClick(v);
                               }}
-                              className={`px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[9px] transition-all flex items-center justify-center gap-2 ${isVistoriado ? 'bg-emerald-600 text-white hover:bg-emerald-700' : (isDark ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-[#003B95] text-white hover:bg-blue-800')}`}
+                              className={`flex-1 sm:flex-none px-4 py-3 sm:py-2 rounded-xl font-black uppercase tracking-widest text-[10px] sm:text-[9px] transition-all flex items-center justify-center gap-2 ${isVistoriado ? 'bg-emerald-600 text-white hover:bg-emerald-700' : (isDark ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-[#003B95] text-white hover:bg-blue-800')}`}
                             >
                               {isVistoriado ? 'Visualizar' : 'Vistoriar'}
                             </button>
@@ -4110,57 +4112,8 @@ const App = () => {
                  </p>
                </div>
                
-               <div className="flex flex-wrap gap-3">
-                 {!isExportMode ? (
-                   <>
-                     <button onClick={exportLaudosAsAnexoJ} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:shadow-lg'}`}>
-                       <Download size={16} /> Exportar Planilha
-                     </button>
-                     <button onClick={() => setIsExportMode(true)} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 ${isDark ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-[#003B95] border-[#003B95] text-white hover:bg-blue-800 shadow-blue-500/20'}`}>
-                       <Printer size={16} /> Exportar Laudos
-                     </button>
-                   </>
-                 ) : (
-                   <>
-                     <button onClick={handleBulkExport} disabled={bulkExporting || selectedLaudos.length === 0} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg border flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : ""} ${isDark ? 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700' : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20'}`}>
-                       {bulkExporting ? <RotateCw size={16} className="animate-spin" /> : <Printer size={16} />}
-                       {bulkExporting ? "Processando..." : `Confirmar Exportação (${selectedLaudos.length})`}
-                     </button>
-                     <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`px-5 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
-                       <X size={16} /> Cancelar Seleção
-                     </button>
-                   </>
-                 )}
-               </div>
-             </header>
 
-             {/* Search Bar */}
-             <div className="mb-6 px-4 md:px-0">
-               <div className="relative group">
-                 <div className={`absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none transition-colors ${isDark ? 'group-focus-within:text-blue-500 text-slate-500' : 'group-focus-within:text-[#003B95] text-gray-400'}`}>
-                   <Search size={18} />
-                 </div>
-                 <input
-                   type="text"
-                   placeholder="Pesquisar por placa ou modelo..."
-                   value={dashboardSearchTerm}
-                   onChange={(e) => setDashboardSearchTerm(e.target.value)}
-                   className={`w-full pl-12 pr-4 py-4 rounded-2xl border-2 transition-all outline-none font-bold text-sm ${
-                     isDark 
-                       ? 'bg-slate-900 border-slate-800 focus:border-blue-500/50 text-white placeholder:text-slate-600' 
-                       : 'bg-white border-gray-100 focus:border-[#003B95]/30 text-gray-900 placeholder:text-gray-400 focus:shadow-lg focus:shadow-blue-500/10'
-                   }`}
-                 />
-                 {dashboardSearchTerm && (
-                   <button 
-                     onClick={() => setDashboardSearchTerm('')}
-                     className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                   >
-                     <X size={18} />
-                   </button>
-                 )}
-               </div>
-             </div>
+             </header>
 
              {/* Dashboard Metrics Section */}
              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10 px-4 md:px-0">
@@ -4200,6 +4153,95 @@ const App = () => {
                   </div>
                   <div className="text-[10px] font-bold uppercase tracking-widest opacity-50">Arrecadação Mínima Estimada</div>
                 </div>
+             </div>
+
+             {/* Unified Control Bar (Reflecting Seleção Page Model) */}
+             <div className="mb-8 px-4 md:px-0 space-y-4">
+               <div className="flex flex-wrap items-center gap-3 w-full">
+                 <div className={`relative flex items-center px-4 h-14 flex-1 min-w-[280px] rounded-2xl border shadow-sm transition-all focus-within:shadow-md ${isDark ? 'bg-slate-900 border-slate-800 focus-within:border-blue-500/50' : 'bg-white border-gray-100 focus-within:border-[#003B95]/30'}`}>
+                   <Search size={20} className="text-gray-400 mr-3 shrink-0" />
+                   <input 
+                     type="text" 
+                     placeholder="Buscar por placa ou modelo..." 
+                     value={dashboardSearchTerm}
+                     onChange={(e) => setDashboardSearchTerm(e.target.value)}
+                     className="bg-transparent border-none outline-none w-full text-base font-bold placeholder:text-gray-400 text-gray-900 dark:text-white"
+                   />
+                   {dashboardSearchTerm && (
+                     <button onClick={() => setDashboardSearchTerm('')} className="ml-2 text-gray-400 hover:text-gray-600">
+                       <X size={18} />
+                     </button>
+                   )}
+                 </div>
+
+                 <div className={`flex items-center h-14 rounded-2xl border shadow-sm px-4 ${isDark ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-gray-100 text-[#003B95]'}`}>
+                   <Filter size={18} className="text-blue-500 mr-3" />
+                   <select 
+                     value={dashboardFilterClass} 
+                     onChange={(e) => setDashboardFilterClass(e.target.value)}
+                     className="bg-transparent border-none outline-none text-sm font-black uppercase tracking-widest cursor-pointer appearance-none pr-2"
+                   >
+                     <option value="TODOS">Classificação: Todas</option>
+                     <option value="SUCATA">Sucata</option>
+                     <option value="BLA">BLA</option>
+                     <option value="RECUPERADO">Recuperado</option>
+                     <option value="IMPEDIMENTOS">Impedimentos</option>
+                   </select>
+                 </div>
+
+                 <div className="flex gap-2 ml-auto">
+                   {!isExportMode ? (
+                     <>
+                        <button onClick={exportLaudosAsAnexoJ} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
+                          <Download size={18} className="opacity-50" />
+                          <span className="hidden sm:inline">Exportar Planilha</span>
+                          <span className="sm:hidden">Planilha</span>
+                        </button>
+                        <button onClick={() => setIsExportMode(true)} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 ${isDark ? 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700' : 'bg-[#003B95] border-[#003B95] text-white hover:bg-blue-800 shadow-blue-500/20'}`}>
+                          <Printer size={18} />
+                          <span className="hidden sm:inline">Exportar Laudos</span>
+                          <span className="sm:hidden">Laudos</span>
+                        </button>
+                     </>
+                   ) : (
+                     <>
+                        <button onClick={handleBulkExport} disabled={bulkExporting || selectedLaudos.length === 0} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${isDark ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20'}`}>
+                          {bulkExporting ? <RotateCw size={18} className="animate-spin" /> : <Printer size={18} />}
+                          <span>{bulkExporting ? "Processando..." : `Confirmar (${selectedLaudos.length})`}</span>
+                        </button>
+                        <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`h-14 px-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
+                          <X size={18} />
+                        </button>
+                     </>
+                   )}
+                 </div>
+               </div>
+
+               {isExportMode && (
+                 <div className="flex flex-wrap gap-2 pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <button
+                      onClick={() => {
+                        const allIds = filteredInspectedResults.map(r => r.id);
+                        setSelectedLaudos([...new Set([...selectedLaudos, ...allIds])]);
+                      }}
+                      className={`px-6 h-10 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20`}
+                    >
+                      Selecionar Todos Filtrados
+                    </button>
+                    <button
+                      onClick={() => {
+                        const allIds = filteredInspectedResults.map(r => r.id);
+                        setSelectedLaudos(selectedLaudos.filter(id => !allIds.includes(id)));
+                      }}
+                      className={`px-6 h-10 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${isDark ? 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700' : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200'}`}
+                    >
+                      Deselecionar Filtrados
+                    </button>
+                    <div className={`ml-auto px-4 h-10 flex items-center rounded-xl text-[9px] font-black uppercase tracking-widest ${isDark ? 'bg-slate-900 text-slate-500' : 'bg-gray-50 text-gray-400'}`}>
+                      {selectedLaudos.length} itens selecionados
+                    </div>
+                 </div>
+               )}
              </div>
 
              <div className="flex flex-col space-y-2">
@@ -4274,7 +4316,7 @@ const App = () => {
                        </span>
                      </div>
 
-                     <div className="col-span-4 flex items-center justify-end gap-2 mt-2 pt-2 md:mt-0 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-slate-800">
+                     <div className="col-span-4 flex items-center justify-start md:justify-end flex-wrap md:flex-nowrap gap-2 mt-3 pt-3 md:mt-0 md:pt-0 border-t md:border-t-0 border-gray-100 dark:border-slate-800">
                         <button onClick={() => { setLaudoData(r.fullData); setViewMode(true); setSourceTab(activeTab); setActiveTab('mimico'); }} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Visualizar">
                            <Eye size={16} />
                            <span className="hidden lg:inline text-[9px] font-black uppercase">Ver</span>
@@ -4305,9 +4347,8 @@ const App = () => {
                  </div>
                )}
              </div>
-
            </div>
-        )}
+         )}
 
         {activeTab === 'incluir_veiculos' && (
           <div className="max-w-4xl mx-auto pt-8 pb-8 px-6">
@@ -4388,6 +4429,10 @@ const App = () => {
           <div className="max-w-7xl mx-auto pt-0 pb-8 px-4 md:px-0 lg:px-0 h-[calc(100vh-5rem)]">
             <SpreadsheetEditor frota={frota} onSave={handleAddVehiclesPlanilha} isDark={isDark} />
           </div>
+        )}
+
+        {activeTab === 'perfil' && (
+           <UserProfile isDark={isDark} user={user} />
         )}
 
         {viewingVehicleDetails && (
