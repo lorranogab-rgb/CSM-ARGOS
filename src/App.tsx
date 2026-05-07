@@ -1434,7 +1434,11 @@ const App = () => {
       await signInWithPopup(auth, googleProvider);
     } catch (e: any) {
       console.error(e);
-      setAuthError("Erro na autenticação com Google.");
+      if (e.code === 'auth/network-request-failed') {
+        setAuthError("Erro de conexão. Verifique sua internet ou se há bloqueadores de anúncios ativos.");
+      } else {
+        setAuthError("Erro na autenticação com Google.");
+      }
     }
   };
 
@@ -1459,6 +1463,8 @@ const App = () => {
         setAuthError("E-mail inválido.");
       } else if (e.code === 'auth/operation-not-allowed') {
         setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console.");
+      } else if (e.code === 'auth/network-request-failed') {
+        setAuthError("Erro de conexão com o Firebase Auth. Verifique sua internet ou bloqueadores de anúncios.");
       } else {
         setAuthError("Erro na autenticação: " + e.message);
       }
@@ -2562,15 +2568,7 @@ const App = () => {
            </button>
         </div>
 
-        <div className="hidden lg:flex flex-col items-center justify-center pt-10 pb-6">
-           <div className={`w-14 h-14 flex items-center justify-center rounded-[1.25rem] shadow-xl mb-4 transition-transform hover:scale-105 active:scale-95 cursor-pointer ${isDark ? 'bg-slate-800 text-blue-400' : 'bg-white border border-blue-50 text-[#003B95]'}`}>
-              <Eye size={32} strokeWidth={2.5} />
-           </div>
-           <div className="text-center">
-             <span className={`text-xl font-black tracking-tighter ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
-             <div className="h-1 w-8 bg-blue-500 mx-auto mt-1 rounded-full opacity-50"></div>
-           </div>
-        </div>
+        <div className="hidden lg:block h-8"></div>
         
         <nav className="flex-1 flex flex-col p-4 space-y-1.5">
           <button 
