@@ -1,6 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
@@ -10,80 +11,72 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.email in ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com']
+      );
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email in ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com'];
+    }
+
     function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
 
-    function isAdmin() {
-      return isSignedIn() && (request.auth.token.email == 'lorranogab@gmail.com' || request.auth.token.email == 'cbmpr.leilao@gmail.com');
-    }
-
-    // 2. Schema Validation Helpers
+    // 2. Validation Blueprints
     function isValidVehicle(data) {
       return data.keys().hasAll(['placa', 'modelo', 'uploadedAt', 'uploadedBy'])
-        && data.placa is string && data.placa.size() <= 64
-        && data.modelo is string && data.modelo.size() <= 200
-        && (!('fipe' in data) || data.fipe is number || (data.fipe is string && data.fipe.size() <= 64))
-        && (!('chassi' in data) || (data.chassi is string && data.chassi.size() <= 128))
-        && (!('motor' in data) || (data.motor is string && data.motor.size() <= 128))
-        && (!('municipio' in data) || (data.municipio is string && data.municipio.size() <= 128))
-        && (!('cor' in data) || (data.cor is string && data.cor.size() <= 64))
-        && (!('ano' in data) || (data.ano is string && data.ano.size() <= 32))
-        && (!('patrimonio' in data) || (data.patrimonio is string && data.patrimonio.size() <= 128))
-        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && data.placa is string && data.placa.size() <= 128
+        && data.modelo is string && data.modelo.size() <= 512
         && (data.uploadedBy == request.auth.uid || isAdmin());
     }
 
     function isValidInspection(data) {
       return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'])
-        && data.placa is string && data.placa.size() <= 64
-        && data.modelo is string && data.modelo.size() <= 200
+        && data.placa is string && data.placa.size() <= 128
+        && data.modelo is string && data.modelo.size() <= 512
         && data.nota is number
-        && data.class is string && data.class.size() <= 100
-        && data.data is string && data.data.size() <= 64
         && data.fullData is map
         && (data.inspectedBy == request.auth.uid || isAdmin());
     }
 
     // 3. Collection Rules
     match /vehicles/{vehicleId} {
-      allow get: if isSignedIn() && isValidId(vehicleId) && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
-      allow list: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid); 
+      allow get: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
       
-      allow create: if isSignedIn() 
+      allow create: if isVerified() 
                     && isValidId(vehicleId)
                     && isValidVehicle(incoming())
                     && incoming().uploadedAt == request.time;
                     
-      allow update: if isAdmin(); // Admins can fix data if needed
+      allow update: if isAdmin();
       
-      allow delete: if isSignedIn() && isValidId(vehicleId) && (resource == null || isAdmin() || resource.data.uploadedBy == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
     match /inspections/{inspectionId} {
-      allow get: if isSignedIn() && isValidId(inspectionId) && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
+      allow get: if isSignedIn() && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
       allow list: if isSignedIn() && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
       
-      allow create: if isSignedIn()
+      allow create: if isVerified()
                     && isValidId(inspectionId)
                     && isValidInspection(incoming())
                     && incoming().inspectedAt == request.time;
                     
-      allow update: if (
-                      isSignedIn()
-                      && isValidId(inspectionId)
-                      && isValidInspection(incoming())
-                      && (isAdmin() || incoming().inspectedBy == existing().inspectedBy)
-                      && incoming().diff(existing()).affectedKeys().hasOnly([
-                        'placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'
-                      ])
-                      && incoming().inspectedAt == request.time
-                    );
+      allow update: if isVerified()
+                    && isValidId(inspectionId)
+                    && isValidInspection(incoming())
+                    && (isAdmin() || incoming().inspectedBy == existing().inspectedBy)
+                    && incoming().inspectedAt == request.time;
                     
-      allow delete: if isSignedIn() && isValidId(inspectionId) && (resource == null || isAdmin() || resource.data.inspectedBy == request.auth.uid);
+      allow delete: if isAdmin();
     }
   }
 }

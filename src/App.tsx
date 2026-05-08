@@ -1808,10 +1808,53 @@ const App = () => {
         const workbook = XLSX.read(data, { type: 'binary' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-        if (jsonData.length > 0) {
-          const getVal = (row: any, keys: string[], excludeRegex?: RegExp) => {
+        // Use header: 1 to get array of arrays for robust header detection
+        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+        if (rawRows.length > 0) {
+          // 1. Find the header row by searching for keywords
+          const headerKeywords = ['placa', 'modelo', 'veiculo', 'chassi', 'ord', 'item', 'nº', 'patrimonio', 'gpm'];
+          let headerIndex = 0;
+          let maxMatches = 0;
+
+          // Search first 20 rows for the best header candidate
+          for (let i = 0; i < Math.min(rawRows.length, 20); i++) {
+            const row = rawRows[i];
+            if (!row || !Array.isArray(row)) continue;
+
+            let matches = 0;
+            row.forEach(cell => {
+              if (typeof cell === 'string') {
+                const normalized = cell.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                if (headerKeywords.some(kw => normalized.includes(kw))) {
+                  matches++;
+                }
+              }
+            });
+
+            if (matches > maxMatches) {
+              maxMatches = matches;
+              headerIndex = i;
+            }
+          }
+
+          const headers = rawRows[headerIndex] || [];
+          const dataRows = rawRows.slice(headerIndex + 1);
+
+          // Convert array of arrays back to objects using the found headers
+          const jsonData = dataRows.map(row => {
+            const obj: any = {};
+            headers.forEach((h, i) => {
+              if (h !== undefined && h !== null) {
+                obj[String(h)] = row[i];
+              }
+            });
+            return obj;
+          }).filter(obj => Object.values(obj).some(v => v !== undefined && v !== null && v !== ''));
+
+          if (jsonData.length > 0) {
+            const getVal = (row: any, keys: string[], excludeRegex?: RegExp) => {
             const rowKeys = Object.keys(row);
             
             // First pass: Exact match
@@ -1823,21 +1866,27 @@ const App = () => {
               });
               if (found) {
                 const val = row[found];
+                if (val === undefined || val === null) return "";
                 return typeof val === 'string' ? val.trim() : val;
               }
             }
 
             // Second pass: Regex word boundary match, but ignore columns matching excludeRegex
+            // We treat underscores and other non-alphanumeric chars as boundaries
             for (const k of keys) {
               const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
               const found = rowKeys.find(rk => {
                 const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
                 if (excludeRegex && excludeRegex.test(normalizedRK)) return false;
+                
+                // Allow matching "placa" in "placa_veiculo" by treating _ as boundary
+                const searchRK = normalizedRK.replace(/_/g, ' ');
                 const regex = new RegExp(`\\b${normalizedK}\\b`);
-                return regex.test(normalizedRK);
+                return regex.test(searchRK) || normalizedRK.includes(normalizedK);
               });
               if (found) {
                 const val = row[found];
+                if (val === undefined || val === null) return "";
                 return typeof val === 'string' ? val.trim() : val;
               }
             }
@@ -1845,7 +1894,7 @@ const App = () => {
           };
 
           let hasOrdColumn = false;
-          const possibleOrdKeys = ['ord', 'ord.', 'ordem', 'nº', 'numero', 'n.'];
+          const possibleOrdKeys = ['ord', 'ord.', 'ordem', 'nº', 'numero', 'n.', 'item'];
           if (jsonData.length > 0) {
             const firstRowKeys = Object.keys(jsonData[0] || {});
             hasOrdColumn = firstRowKeys.some(rk => {
@@ -1877,14 +1926,17 @@ const App = () => {
             }
 
             return {
-              _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº']),
+              _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº', 'item']),
               id: `upload-${Date.now()}-${index}`,
               orgao: getVal(row, ['orgao', 'unidade', 'secretaria', 'órgão']),
-              placa: getVal(row, ['placa', 'prefixo', 'identificacao']),
+              placa: getVal(row, ['placa', 'prefixo', 'identificacao', 'placa/prefixo']),
               modelo: getVal(row, ['modelo', 'veiculo', 'descricao', 'marca', 'especificacao', 'marca/modelo']),
               tipo: getVal(row, ['tipo', 'categoria']),
               avaliacao: getVal(row, ['avaliacao', 'valor avaliado', 'preco', 'avaliação']),
-              fipe: typeof rawFipe === 'number' ? rawFipe : parseFloat(String(rawFipe).replace(/[^\d.,]/g, '').replace(',', '.') || '0'),
+              fipe: (() => {
+                const fVal = typeof rawFipe === 'number' ? rawFipe : parseFloat(String(rawFipe).replace(/[^\d.,]/g, '').replace(',', '.') || '0');
+                return isNaN(fVal) ? 0 : fVal;
+              })(),
               chassi: getVal(row, ['chassi', 'chassis', 'serie']),
               motor: getVal(row, ['motor', 'n motor', 'numero motor', 'núm. do motor']),
               municipio: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao']),
@@ -1896,7 +1948,7 @@ const App = () => {
               pctFipe: getVal(row, ['% fipe', 'percentual fipe', 'pct fipe', '% da fipe']),
               precoMinimo: getVal(row, ['preco minimo', 'preco_minimo', 'valor minimo', 'preço mínimo']),
               situacaoDetran: getVal(row, ['situacao detran', 'situacao_detran', 'detran', 'situação detran']),
-              patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio']),
+              patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio', 'gpm/patrimonio']),
               enderecoPatio: rawEnderecoCombo || getVal(row, ['endereco do patio', 'endereco patio', 'localizacao', 'endereço do pátio']),
               endereco: {
                 rua: extractedRua || getVal(row, ['rua', 'logradouro', 'endereco', 'endereço']),
@@ -1908,17 +1960,21 @@ const App = () => {
           });
 
           const validFrotaRaw = newFrota.filter(f => {
+            const hasPlaca = f.placa && String(f.placa).trim().length > 0;
+            const hasChassi = f.chassi && String(f.chassi).trim().length > 0;
+            const hasPatrimonio = f.patrimonio && String(f.patrimonio).trim().length > 0;
+            const hasModel = f.modelo && String(f.modelo).trim().length > 0;
+            const hasRenavam = f.renavam && String(f.renavam).trim().length > 0;
+
+            // If any identification or basic info is present, we consider it a valid row
+            if (hasPlaca || hasChassi || hasPatrimonio || hasModel || hasRenavam) return true;
+
+            // If there's an Ord column, check if it has any content
             if (hasOrdColumn) {
-               // If there's an Ord column, strictly require it to be a valid number or non-empty
-               if (f._ord === undefined || f._ord === '' || f._ord === null) return false;
-               if (isNaN(Number(f._ord))) return false;
-               return true;
-            } else {
-               const hasPlaca = f.placa && String(f.placa).trim().length > 0;
-               const hasChassi = f.chassi && String(f.chassi).trim().length > 0;
-               const hasPatrimonio = f.patrimonio && String(f.patrimonio).trim().length > 0;
-               return hasPlaca || hasChassi || hasPatrimonio;
+               return f._ord !== undefined && f._ord !== '' && f._ord !== null;
             }
+            
+            return false;
           });
 
           // Deduplicate incoming list (both against existing and within itself)
@@ -1996,15 +2052,22 @@ const App = () => {
             e.target.value = ''; // Reset input
           }
         } else {
+          // jsonData.length === 0
           setLoadingTask(null);
+          e.target.value = '';
         }
-      } catch (err) {
-        console.error(err);
+      } else {
+        // rawRows.length === 0
         setLoadingTask(null);
+        e.target.value = '';
       }
-    };
-    reader.readAsBinaryString(file);
+    } catch (err) {
+      console.error(err);
+      setLoadingTask(null);
+    }
   };
+  reader.readAsBinaryString(file);
+};
 
   const startInspection = (v: any) => {
     const existing = inspectedResults.find(r => r.placa === v.placa);
