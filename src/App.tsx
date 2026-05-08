@@ -1205,13 +1205,34 @@ const App = () => {
   const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
 
   const yardStats = useMemo(() => {
-    const stats: Record<string, number> = {};
+    const stats: Record<string, { total: number; inspected: number; impediments: number }> = {};
+    
+    // Lista de placas com vistorias e impedimentos para cruzamento rápido
+    const inspectedPlates = new Set(inspectedResults.map(r => r.placa));
+    const impedimentPlates = new Set(
+      inspectedResults
+        .filter(r => r.fullData?.hasImpediment || r.class === 'IMPEDIMENTOS')
+        .map(r => r.placa)
+    );
+
     frota.forEach(v => {
       const city = (v.municipio || 'NÃO INFORMADO').toUpperCase();
-      stats[city] = (stats[city] || 0) + 1;
+      if (!stats[city]) {
+        stats[city] = { total: 0, inspected: 0, impediments: 0 };
+      }
+      stats[city].total += 1;
+      
+      if (inspectedPlates.has(v.placa)) {
+        stats[city].inspected += 1;
+      }
+      
+      if (impedimentPlates.has(v.placa)) {
+        stats[city].impediments += 1;
+      }
     });
-    return Object.entries(stats).sort((a, b) => b[1] - a[1]);
-  }, [frota]);
+
+    return Object.entries(stats).sort((a, b) => b[1].total - a[1].total);
+  }, [frota, inspectedResults]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('');
@@ -1434,10 +1455,20 @@ const App = () => {
       await signInWithPopup(auth, googleProvider);
     } catch (e: any) {
       console.error(e);
-      if (e.code === 'auth/network-request-failed') {
+      const errorCode = e.code || "";
+      const errorMessage = e.message || "";
+      const errorStr = String(e);
+      
+      if (errorCode === 'auth/network-request-failed') {
         setAuthError("Erro de conexão. Verifique sua internet ou se há bloqueadores de anúncios ativos.");
+      } else if (errorCode === 'auth/invalid-credential' || 
+                 errorMessage.includes('invalid-credential') ||
+                 errorStr.includes('invalid-credential')) {
+        setAuthError("Credenciais inválidas ou sessão expirada.");
+      } else if (errorCode === 'auth/popup-closed-by-user') {
+        // Just ignore if the user closed the popup
       } else {
-        setAuthError("Erro na autenticação com Google.");
+        setAuthError("Erro na autenticação com Google: " + errorMessage);
       }
     }
   };
@@ -1453,20 +1484,29 @@ const App = () => {
       }
     } catch (e: any) {
       console.error(e);
-      if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+      const errorCode = e.code || "";
+      const errorMessage = e.message || "";
+      const errorStr = String(e);
+      
+      if (errorCode === 'auth/user-not-found' || 
+          errorCode === 'auth/wrong-password' || 
+          errorCode === 'auth/invalid-credential' ||
+          errorMessage.includes('auth/invalid-credential') ||
+          errorMessage.includes('invalid-credential') ||
+          errorStr.includes('invalid-credential')) {
         setAuthError("E-mail ou senha incorretos.");
-      } else if (e.code === 'auth/email-already-in-use') {
+      } else if (errorCode === 'auth/email-already-in-use') {
         setAuthError("Este e-mail já está em uso.");
-      } else if (e.code === 'auth/weak-password') {
+      } else if (errorCode === 'auth/weak-password') {
         setAuthError("A senha deve ter pelo menos 6 caracteres.");
-      } else if (e.code === 'auth/invalid-email') {
+      } else if (errorCode === 'auth/invalid-email') {
         setAuthError("E-mail inválido.");
-      } else if (e.code === 'auth/operation-not-allowed') {
+      } else if (errorCode === 'auth/operation-not-allowed') {
         setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console.");
-      } else if (e.code === 'auth/network-request-failed') {
+      } else if (errorCode === 'auth/network-request-failed') {
         setAuthError("Erro de conexão com o Firebase Auth. Verifique sua internet ou bloqueadores de anúncios.");
       } else {
-        setAuthError("Erro na autenticação: " + e.message);
+        setAuthError("Erro na autenticação: " + errorMessage);
       }
     }
   };
@@ -2799,7 +2839,7 @@ const App = () => {
                     </button>
 
                     <button 
-                      onClick={() => setActiveTab('planilha')}
+                      onClick={() => setActiveTab('incluir_veiculos')}
                       className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
                     >
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-gray-100'}`}>
@@ -2950,21 +2990,46 @@ const App = () => {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {yardStats.map(([city, count]) => (
-                      <div key={city} onClick={() => setSelectedYard(city)} className={`p-6 rounded-2xl border transition-all hover:scale-[1.02] cursor-pointer group ${isDark ? 'bg-slate-950/40 border-slate-800 hover:border-slate-700' : 'bg-gray-50/50 border-gray-100 hover:border-gray-200'}`}>
-                        <div className="flex justify-between items-start mb-4">
-                          <MapPin size={24} className="text-blue-500" />
-                          <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-white text-gray-400 shadow-sm'}`}>
-                            Pátio
+                    {yardStats.map(([city, stats]: [string, any]) => {
+                      const percent = stats.total > 0 ? Math.round((stats.inspected / stats.total) * 100) : 0;
+                      return (
+                        <div 
+                          key={city} 
+                          onClick={() => setSelectedYard(city)} 
+                          className={`p-6 rounded-3xl border transition-all hover:scale-[1.02] active:scale-95 cursor-pointer group relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-xl shadow-gray-200/50'}`}
+                        >
+                          <div className="relative z-10">
+                            <div className="flex justify-between items-start mb-4">
+                              <MapPin size={24} className="text-blue-500" />
+                              <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-blue-50 text-blue-600'}`}>
+                                {percent}% Progresso
+                              </div>
+                            </div>
+                            <div className={`text-base font-black uppercase tracking-tight mb-4 truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>{city}</div>
+                            
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-baseline gap-1">
+                                <span className={`text-3xl font-black ${isDark ? 'text-white' : 'text-blue-900'}`}>{stats.total}</span>
+                                <span className={`text-[10px] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Veículos</span>
+                              </div>
+                              {stats.impediments > 0 && (
+                                <div className="flex items-center gap-1 text-red-500 text-[10px] font-black uppercase">
+                                  <AlertCircle size={14} />
+                                  <span>{stats.impediments} Bloqueios</span>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`}>
+                              <div 
+                                className={`h-full transition-all duration-700 bg-blue-500`}
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
                           </div>
                         </div>
-                        <div className={`text-xs font-black uppercase tracking-widest mb-1 truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{city}</div>
-                        <div className="flex items-baseline gap-2">
-                          <span className={`text-3xl font-black ${isDark ? 'text-white' : 'text-blue-900'}`}>{count}</span>
-                          <span className={`text-[10px] font-bold uppercase ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Veículos</span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -4096,49 +4161,84 @@ const App = () => {
              </header>
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
-               {yardStats.map(([city, count]) => (
-                 <div 
-                   key={city} 
-                   onClick={() => { setSelectedYard(city); setActiveTab('selecao'); }}
-                   className={`p-6 rounded-3xl border transition-all hover:scale-[1.02] active:scale-95 cursor-pointer group relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50 shadow-2xl' : 'bg-white border-gray-100 hover:border-blue-200 shadow-xl shadow-gray-200/50'}`}
-                 >
-                   <div className="relative z-10">
-                     <div className="flex justify-between items-start mb-6">
-                       <div className={`p-3 rounded-2xl ${isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                         <MapPin size={24} />
-                       </div>
-                       <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-gray-50 text-gray-400'}`}>
-                         Ativo
-                       </div>
-                     </div>
-                     
-                     <h3 className={`text-xl font-black uppercase tracking-tight mb-1 truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>
-                       {city}
-                     </h3>
-                     
-                     <div className="flex items-center gap-2 mt-4">
-                       <span className="text-3xl font-black text-blue-500">{count}</span>
-                       <span className={`text-xs font-bold uppercase tracking-tighter ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Veículos em Pátio</span>
-                     </div>
+               {yardStats.map(([city, stats]: [string, any]) => {
+                 const percent = stats.total > 0 ? Math.round((stats.inspected / stats.total) * 100) : 0;
+                 const hasCritical = stats.impediments > 0;
 
-                     <div className="mt-6 flex items-center justify-between">
-                       <div className="flex -space-x-2">
-                         {[1, 2, 3].map(i => (
-                           <div key={i} className={`w-6 h-6 rounded-full border-2 ${isDark ? 'bg-slate-800 border-slate-900' : 'bg-gray-100 border-white text-gray-400'} flex items-center justify-center text-[8px] font-bold`}>
-                             {i}
+                 return (
+                   <div 
+                     key={city} 
+                     onClick={() => { setSelectedYard(city); setActiveTab('selecao'); }}
+                     className={`p-6 rounded-3xl border transition-all hover:scale-[1.05] hover:shadow-2xl active:scale-95 cursor-pointer group relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50' : 'bg-white border-gray-100 hover:border-blue-300 shadow-xl shadow-gray-200/50'}`}
+                   >
+                     <div className="relative z-10">
+                       <div className="flex justify-between items-start mb-6">
+                         <div className={`p-3 rounded-2xl ${hasCritical ? 'bg-red-500/10 text-red-500' : (isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600')}`}>
+                           {hasCritical ? <AlertTriangle size={24} /> : <MapPin size={24} />}
+                         </div>
+                         <div className="flex flex-col items-end">
+                           <div className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tight mb-1 ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-gray-100 text-gray-400'}`}>
+                             {stats.total} total
                            </div>
-                         ))}
+                           {hasCritical && (
+                             <div className="px-2 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black uppercase tracking-tight animate-pulse">
+                               {stats.impediments} {stats.impediments === 1 ? 'Impedimento' : 'Impedimentos'}
+                             </div>
+                           )}
+                         </div>
                        </div>
-                       <span className="text-xs font-black uppercase text-blue-500 group-hover:translate-x-1 transition-transform">Gerenciar →</span>
+                       
+                       <h3 className={`text-xl font-black uppercase tracking-tight mb-1 truncate ${isDark ? 'text-white' : 'text-[#003B95]'}`}>
+                         {city}
+                       </h3>
+                       <p className={`text-[10px] font-bold uppercase tracking-widest opacity-50 mb-4 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                         Pátio de Gestão Regional
+                       </p>
+                       
+                       <div className="space-y-4">
+                         <div className="flex items-center justify-between">
+                            <div className="flex items-baseline gap-1">
+                               <span className="text-3xl font-black text-blue-500">{stats.inspected}</span>
+                               <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>/ {stats.total} Homologados</span>
+                            </div>
+                            <span className="text-sm font-black text-blue-500 opacity-80">{percent}%</span>
+                         </div>
+
+                         {/* Progress Bar */}
+                         <div className={`h-2 w-full rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`}>
+                            <div 
+                              className={`h-full transition-all duration-1000 ease-out rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]'}`}
+                              style={{ width: `${percent}%` }}
+                            />
+                         </div>
+
+                         <div className="pt-2 flex items-center justify-between">
+                           <div className="flex -space-x-1.5">
+                             {Array.from({ length: Math.min(stats.inspected, 4) }).map((_, i) => (
+                               <div key={i} className={`w-7 h-7 rounded-full border-2 ${isDark ? 'bg-slate-800 border-slate-900 text-blue-400' : 'bg-blue-50 border-white text-blue-600'} flex items-center justify-center text-[10px] font-black transform hover:-translate-y-1 transition-transform`}>
+                                 <Plus size={10} />
+                               </div>
+                             ))}
+                             {stats.total - stats.inspected > 0 && (
+                               <div className={`w-7 h-7 rounded-full border-2 ${isDark ? 'bg-slate-700 border-slate-900 text-slate-400' : 'bg-gray-100 border-white text-gray-400'} flex items-center justify-center text-[8px] font-black`}>
+                                 +{stats.total - stats.inspected}
+                               </div>
+                             )}
+                           </div>
+                           <span className="text-[10px] font-black uppercase text-blue-500 group-hover:translate-x-1 transition-transform flex items-center gap-1">
+                             Inventário <ChevronRight size={14} />
+                           </span>
+                         </div>
+                       </div>
+                     </div>
+
+                     {/* Decorative background element */}
+                     <div className="absolute -bottom-10 -right-6 opacity-5 group-hover:opacity-10 transition-all duration-500 group-hover:scale-110 group-hover:-rotate-12">
+                       <MapPin size={160} />
                      </div>
                    </div>
-
-                   {/* Decorative background element */}
-                   <div className="absolute -bottom-6 -right-6 opacity-5 group-hover:opacity-10 transition-opacity">
-                     <MapPin size={120} />
-                   </div>
-                 </div>
-               ))}
+                 );
+               })}
 
                {yardStats.length === 0 && (
                  <div className="col-span-full py-20 text-center">
