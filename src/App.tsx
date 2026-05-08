@@ -28,6 +28,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
+import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, where, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
@@ -1209,6 +1210,8 @@ const App = () => {
     }
   };
   const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
+  const [selectedYardsForBulk, setSelectedYardsForBulk] = useState<string[]>([]);
+  const [showYardDeleteConfirm, setShowYardDeleteConfirm] = useState(false);
 
   const yardStats = useMemo(() => {
     const stats: Record<string, { total: number; inspected: number; impediments: number }> = {};
@@ -2496,6 +2499,7 @@ const App = () => {
 
   return (
     <div className={`flex flex-col lg:flex-row h-screen font-sans antialiased overflow-hidden ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-gray-50 text-gray-900'}`}>
+      <Toaster position="top-right" richColors />
       {loadingTask && <LoadingArgos type={loadingTask.type} message={loadingTask.message} isDark={isDark} progress={loadingTask.progress} />}
       <PrintPreviewModal showPreview={showPreview} laudoData={laudoData} isDark={isDark} setShowPreview={setShowPreview} previewPage={previewPage} setPreviewPage={setPreviewPage} setLaudoData={setLaudoData} />
       
@@ -2536,6 +2540,41 @@ const App = () => {
                 className="px-6 py-2 bg-red-600 text-white rounded-md font-semibold text-sm hover:bg-red-700 active:scale-95 transition-all shadow-sm shadow-red-500/20"
                >
                  Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showYardDeleteConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className={`relative w-full max-w-sm p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-300 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
+            <div className="flex items-center space-x-3 mb-4">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-red-900/30 text-red-400' : 'bg-red-50 text-red-500'}`}>
+                <Trash2 size={20} />
+              </div>
+              <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Apagar Pátios</h3>
+            </div>
+            <p className={`text-sm mb-6 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+              Deseja realmente apagar todos os veículos dos {selectedYardsForBulk.length} pátios selecionados? Esta ação é irreversível e removerá todos os dados da frota nestas localizações.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button 
+                onClick={() => setShowYardDeleteConfirm(false)} 
+                className={`px-4 py-2 rounded-xl font-semibold text-sm transition-colors ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => {
+                  setFrota(prev => prev.filter(v => !selectedYardsForBulk.includes((v.municipio || 'NÃO INFORMADO').toUpperCase())));
+                  setSelectedYardsForBulk([]);
+                  setShowYardDeleteConfirm(false);
+                  toast.success('Pátios e seus veículos removidos com sucesso');
+                }} 
+                className="px-6 py-2 bg-red-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-red-700 active:scale-95 transition-all shadow-lg shadow-red-500/20"
+              >
+                Sim, Apagar
               </button>
             </div>
           </div>
@@ -2989,6 +3028,15 @@ const App = () => {
                       <p className={`text-[10px] uppercase font-bold tracking-tighter mt-1 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Localização Física da Frota</p>
                     </div>
                     <div className="flex gap-2">
+                      {selectedYardsForBulk.length > 0 && (
+                        <button 
+                          onClick={() => setShowYardDeleteConfirm(true)}
+                          className="flex items-center space-x-2 px-4 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20 transition-all animate-in zoom-in-95"
+                        >
+                          <Trash2 size={14} />
+                          <span>Apagar ({selectedYardsForBulk.length})</span>
+                        </button>
+                      )}
                       <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
                         Total: {frota.length} Veículos
                       </div>
@@ -2998,16 +3046,39 @@ const App = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {yardStats.map(([city, stats]: [string, any]) => {
                       const percent = stats.total > 0 ? Math.round((stats.inspected / stats.total) * 100) : 0;
+                      const isSelected = selectedYardsForBulk.includes(city);
+                      
                       return (
                         <div 
                           key={city} 
-                          onClick={() => setSelectedYard(city)} 
-                          className={`p-6 rounded-3xl border transition-all hover:scale-[1.02] active:scale-95 cursor-pointer group relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-xl shadow-gray-200/50'}`}
+                          onClick={() => {
+                             if (selectedYardsForBulk.length > 0) {
+                               setSelectedYardsForBulk(prev => 
+                                 isSelected ? prev.filter(y => y !== city) : [...prev, city]
+                               );
+                             } else {
+                               setSelectedYard(city);
+                             }
+                          }} 
+                          className={`p-6 rounded-3xl border transition-all hover:scale-[1.02] active:scale-95 cursor-pointer group relative overflow-hidden ${isSelected ? (isDark ? 'border-blue-500 bg-blue-500/5 shadow-2xl shadow-blue-500/10' : 'border-blue-400 bg-blue-50 shadow-2xl shadow-blue-500/10') : (isDark ? 'bg-slate-900 border-slate-800 hover:border-slate-700 shadow-xl' : 'bg-white border-gray-100 shadow-xl shadow-gray-200/50')}`}
                         >
+                          {/* Selection Checkbox */}
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedYardsForBulk(prev => 
+                                isSelected ? prev.filter(y => y !== city) : [...prev, city]
+                              );
+                            }}
+                            className={`absolute top-4 right-4 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all z-20 ${isSelected ? 'bg-blue-500 border-blue-500 text-white' : (isDark ? 'border-slate-700 hover:border-slate-500' : 'border-gray-200 hover:border-blue-300')}`}
+                          >
+                            {isSelected && <Check size={16} strokeWidth={4} />}
+                          </div>
+
                           <div className="relative z-10">
                             <div className="flex justify-between items-start mb-4">
-                              <MapPin size={24} className="text-blue-500" />
-                              <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-blue-50 text-blue-600'}`}>
+                              <MapPin size={24} className={isSelected ? 'text-blue-500' : (isDark ? 'text-slate-500' : 'text-blue-400')} />
+                              <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest mr-8 ${isSelected ? 'bg-blue-500 text-white' : (isDark ? 'bg-slate-800 text-slate-400' : 'bg-blue-50 text-blue-600')}`}>
                                 {percent}% Progresso
                               </div>
                             </div>
@@ -3026,9 +3097,9 @@ const App = () => {
                               )}
                             </div>
 
-                            <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-100'}`}>
+                            <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}>
                               <div 
-                                className={`h-full transition-all duration-700 bg-blue-500`}
+                                className={`h-full transition-all duration-700 ${isSelected ? 'bg-white' : 'bg-blue-500'}`}
                                 style={{ width: `${percent}%` }}
                               />
                             </div>
@@ -4161,22 +4232,56 @@ const App = () => {
 
         {activeTab === 'mapa' && (
            <div className="max-w-7xl mx-auto py-8 px-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <header className="mb-10">
-               <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Seleção de Pátios</h1>
-               <p className={`text-lg font-medium opacity-60 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Selecione uma localização para gerenciar a frota específica</p>
+             <header className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
+               <div>
+                 <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Seleção de Pátios</h1>
+                 <p className={`text-lg font-medium opacity-60 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Selecione uma localização para gerenciar a frota específica</p>
+               </div>
+               {selectedYardsForBulk.length > 0 && (
+                 <button 
+                   onClick={() => setShowYardDeleteConfirm(true)}
+                   className="flex items-center space-x-2 px-6 py-2.5 rounded-2xl bg-red-500 hover:bg-red-600 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-red-500/20 transition-all animate-in slide-in-from-right-4 mb-2"
+                 >
+                   <Trash2 size={18} />
+                   <span>Apagar Selecionados ({selectedYardsForBulk.length})</span>
+                 </button>
+               )}
              </header>
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
                {yardStats.map(([city, stats]: [string, any]) => {
                  const percent = stats.total > 0 ? Math.round((stats.inspected / stats.total) * 100) : 0;
                  const hasCritical = stats.impediments > 0;
+                 const isSelected = selectedYardsForBulk.includes(city);
 
                  return (
                    <div 
                      key={city} 
-                     onClick={() => { setSelectedYard(city); setActiveTab('selecao'); }}
-                     className={`p-6 rounded-3xl border transition-all hover:scale-[1.05] hover:shadow-2xl active:scale-95 cursor-pointer group relative overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50' : 'bg-white border-gray-100 hover:border-blue-300 shadow-xl shadow-gray-200/50'}`}
+                     onClick={() => { 
+                       if (selectedYardsForBulk.length > 0) {
+                         setSelectedYardsForBulk(prev => 
+                           isSelected ? prev.filter(y => y !== city) : [...prev, city]
+                         );
+                       } else {
+                         setSelectedYard(city); 
+                         setActiveTab('selecao'); 
+                       }
+                     }}
+                     className={`p-6 rounded-3xl border transition-all hover:scale-[1.05] hover:shadow-2xl active:scale-95 cursor-pointer group relative overflow-hidden ${isSelected ? (isDark ? 'border-blue-500 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.15)]' : 'border-blue-300 bg-blue-50/50 shadow-2xl shadow-blue-500/10') : (isDark ? 'bg-slate-900 border-slate-800 hover:border-blue-500/50' : 'bg-white border-gray-100 hover:border-blue-300 shadow-xl shadow-gray-200/50')}`}
                    >
+                     {/* Selection Checkbox */}
+                     <div 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedYardsForBulk(prev => 
+                            isSelected ? prev.filter(y => y !== city) : [...prev, city]
+                          );
+                        }}
+                        className={`absolute top-4 right-4 w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all z-20 ${isSelected ? 'bg-blue-500 border-blue-500 text-white shadow-lg' : (isDark ? 'border-slate-700 hover:border-slate-500' : 'border-gray-200 hover:border-blue-300')}`}
+                      >
+                        {isSelected && <Check size={18} strokeWidth={4} />}
+                      </div>
+
                      <div className="relative z-10">
                        <div className="flex justify-between items-start mb-6">
                          <div className={`p-3 rounded-2xl ${hasCritical ? 'bg-red-500/10 text-red-500' : (isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600')}`}>
