@@ -656,7 +656,7 @@ const AnalyticsHeader = ({ inspectedResults, isDark }: { inspectedResults: any[]
   );
 };
 
-const DashboardSummary = ({ frota, inspectedResults, isDark }: { frota: any[], inspectedResults: any[], isDark: boolean }) => {
+const DashboardSummary = ({ frota, inspectedResults, isDark, setActiveTab }: { frota: any[], inspectedResults: any[], isDark: boolean, setActiveTab: (tab: string) => void }) => {
   const totalFleet = frota.length;
   const evaluatedPlacas = new Set(inspectedResults.map(r => r.placa));
   const evaluatedCount = inspectedResults.length;
@@ -736,7 +736,10 @@ const DashboardSummary = ({ frota, inspectedResults, isDark }: { frota: any[], i
       </div>
 
       <div className="lg:col-span-4 flex flex-col gap-4">
-        <div className={`flex-1 p-6 rounded-lg shadow-sm border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+        <div 
+          onClick={() => setActiveTab('selecao')}
+          className={`flex-1 p-6 rounded-lg shadow-sm border cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 hover:border-blue-500' : 'bg-white border-slate-200 hover:border-blue-300 shadow-blue-500/5'}`}
+        >
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-slate-500">Veículos à avaliar</p>
             <Activity className={isDark ? 'text-slate-400' : 'text-blue-600'} size={20} />
@@ -744,7 +747,10 @@ const DashboardSummary = ({ frota, inspectedResults, isDark }: { frota: any[], i
           <p className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{availableToEvaluateCount}</p>
         </div>
         
-        <div className={`flex-1 p-6 rounded-lg shadow-sm border ${isDark ? 'bg-blue-900 border-blue-800 text-blue-100' : 'bg-[#003B95] border-[#003B95] text-white'}`}>
+        <div 
+          onClick={() => setActiveTab('dashboard')}
+          className={`flex-1 p-6 rounded-lg shadow-sm border cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-blue-900 border-blue-800 text-blue-100 hover:bg-blue-800' : 'bg-[#003B95] border-[#003B95] text-white hover:bg-[#002e75] shadow-blue-900/10'}`}
+        >
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-white/80">Vistorias Concluídas</p>
             <CheckCircle className="text-white/60" size={20} />
@@ -2801,7 +2807,7 @@ const App = () => {
              </div>
 
              {/* Main Metrics */}
-             <DashboardSummary frota={frota} inspectedResults={inspectedResults} isDark={isDark} />
+             <DashboardSummary frota={frota} inspectedResults={inspectedResults} isDark={isDark} setActiveTab={setActiveTab} />
 
              {/* Detailed metrics row */}
              <AnalyticsHeader inspectedResults={inspectedResults} isDark={isDark} />

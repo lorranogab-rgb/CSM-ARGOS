@@ -1,0 +1,17 @@
+{
+  "name": "CSM:ARGOS - Gestão de Frotas",
+  "short_name": "ARGOS",
+  "description": "Sistema de Gestão de Frotas e Vistorias",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#003B95",
+  "icons": [
+    {
+      "src": "/Brasao_pequeno.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
