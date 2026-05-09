@@ -22,6 +22,8 @@ export interface Vehicle {
   situacaoDetran?: string;
   endereco_patio?: string;
   municipio: string;
+  fileira?: string;
+  posicao?: string;
   endereco?: {
     rua: string;
     bairro: string;
@@ -57,7 +59,9 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
     precoMinimo: '',
     situacaoDetran: '',
     endereco_patio: '',
-    municipio: ''
+    municipio: '',
+    fileira: '',
+    posicao: ''
   });
 
   const [data, setData] = useState<Vehicle[]>(() => [createEmptyRow()]);
@@ -104,11 +108,11 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
       const isEmpty = !row.orgao && !row.placa && !row.modelo && !row.tipo && !row.avaliacao && 
                       !row.chassi && !row.motor && !row.ano && !row.patrimonio && !row.cor && 
                       !row.origem && !row.renavam && !row.fipe && !row.pctFipe && !row.precoMinimo && 
-                      !row.situacaoDetran && !row.endereco_patio && !row.municipio;
+                      !row.situacaoDetran && !row.endereco_patio && !row.municipio && !row.fileira && !row.posicao;
                       
       if (isEmpty) continue;
       
-      // Fields that are required (everything except pctFipe and precoMinimo)
+      // Fields that are required (everything except pctFipe, precoMinimo, fileira, and posicao)
       const isMissingRequired = !row.orgao || !row.placa || !row.modelo || !row.tipo || !row.avaliacao || 
                                 !row.chassi || !row.motor || !row.ano || !row.comb || !row.patrimonio || !row.cor || 
                                 !row.origem || !row.renavam || !row.fipe || !row.situacaoDetran || 
@@ -136,7 +140,7 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
       return !(!row.orgao && !row.placa && !row.modelo && !row.tipo && !row.avaliacao && 
                !row.chassi && !row.motor && !row.ano && !row.patrimonio && !row.cor && 
                !row.origem && !row.renavam && !row.fipe && !row.pctFipe && !row.precoMinimo && 
-               !row.situacaoDetran && !row.endereco_patio && !row.municipio);
+               !row.situacaoDetran && !row.endereco_patio && !row.municipio && !row.fileira && !row.posicao);
     }));
 
     if (success) {
@@ -186,6 +190,8 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
               <th className="px-3 py-3 font-semibold min-w-[140px]">Situação Detran</th>
               <th className="px-3 py-3 font-semibold min-w-[180px]">Endereço do Pátio</th>
               <th className="px-3 py-3 font-semibold min-w-[120px]">Município</th>
+              <th className="px-3 py-3 font-semibold min-w-[100px]">Fileira</th>
+              <th className="px-3 py-3 font-semibold min-w-[100px]">Posição</th>
               <th className="px-3 py-3 font-semibold text-center sticky right-0 bg-inherit shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)]">Ações</th>
             </tr>
           </thead>
@@ -218,6 +224,8 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({ onSave, is
                 <td className="px-2 py-1.5"><input type="text" value={row.situacaoDetran || ''} onChange={(e) => handleChange(row.id, 'situacaoDetran', e.target.value)} className={inputClass}/></td>
                 <td className="px-2 py-1.5"><input type="text" value={row.endereco_patio || ''} onChange={(e) => handleChange(row.id, 'endereco_patio', e.target.value)} className={`${inputClass} min-w-[200px]`}/></td>
                 <td className="px-2 py-1.5"><input type="text" value={row.municipio || ''} onChange={(e) => handleChange(row.id, 'municipio', e.target.value)} className={inputClass}/></td>
+                <td className="px-2 py-1.5"><input type="text" value={row.fileira || ''} onChange={(e) => handleChange(row.id, 'fileira', e.target.value)} className={inputClass} placeholder="Ex: 01"/></td>
+                <td className="px-2 py-1.5"><input type="text" value={row.posicao || ''} onChange={(e) => handleChange(row.id, 'posicao', e.target.value)} className={inputClass} placeholder="Ex: 05"/></td>
                 <td className={`px-2 py-1.5 text-center align-middle sticky right-0 ${isDark ? 'bg-slate-900 border-l border-slate-800' : 'bg-white border-l border-gray-100'} shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)]`}>
                   <button onClick={() => handleRemoveRow(row.id)} className="p-1.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors mx-auto block" title="Remover veículo">
                     <Trash2 size={16} />

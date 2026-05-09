@@ -14,16 +14,22 @@ service cloud.firestore {
     function isVerified() {
       return isSignedIn() && (
         request.auth.token.email_verified == true || 
-        request.auth.token.email in ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com']
+        request.auth.token.email == 'lorranogab@gmail.com' ||
+        request.auth.token.email == 'cbmpr.leilao@gmail.com' ||
+        request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2'
       );
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email in ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com'];
+      return isSignedIn() && (
+        request.auth.token.email == 'lorranogab@gmail.com' ||
+        request.auth.token.email == 'cbmpr.leilao@gmail.com' ||
+        request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2'
+      );
     }
 
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128;
     }
 
     function incoming() { return request.resource.data; }
@@ -31,9 +37,8 @@ service cloud.firestore {
 
     // 2. Validation Blueprints
     function isValidVehicle(data) {
-      return data.keys().hasAll(['placa', 'modelo', 'uploadedAt', 'uploadedBy'])
+      return data.keys().hasAll(['placa', 'uploadedAt', 'uploadedBy'])
         && data.placa is string && data.placa.size() <= 128
-        && data.modelo is string && data.modelo.size() <= 512
         && (data.uploadedBy == request.auth.uid || isAdmin());
     }
 
@@ -53,12 +58,11 @@ service cloud.firestore {
       
       allow create: if isVerified() 
                     && isValidId(vehicleId)
-                    && isValidVehicle(incoming())
-                    && incoming().uploadedAt == request.time;
+                    && (isAdmin() || (isValidVehicle(incoming()) && incoming().uploadedAt == request.time));
                     
       allow update: if isAdmin();
       
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uploadedBy == request.auth.uid);
     }
 
     match /inspections/{inspectionId} {
@@ -67,8 +71,7 @@ service cloud.firestore {
       
       allow create: if isVerified()
                     && isValidId(inspectionId)
-                    && isValidInspection(incoming())
-                    && incoming().inspectedAt == request.time;
+                    && (isAdmin() || (isValidInspection(incoming()) && incoming().inspectedAt == request.time));
                     
       allow update: if isVerified()
                     && isValidId(inspectionId)
@@ -76,7 +79,7 @@ service cloud.firestore {
                     && (isAdmin() || incoming().inspectedBy == existing().inspectedBy)
                     && incoming().inspectedAt == request.time;
                     
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.inspectedBy == request.auth.uid);
     }
   }
 }

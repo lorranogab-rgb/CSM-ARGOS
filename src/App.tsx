@@ -419,7 +419,31 @@ const MimicoFormIV = ({ data, update, readOnly }) => {
   );
 };
 
-const DigitalIdModal = ({ vehicle, isDark, onClose }: { vehicle: any | null, isDark: boolean, onClose: () => void }) => {
+interface DigitalIdModalProps {
+  vehicle: any | null;
+  isDark: boolean;
+  onClose: () => void;
+  onUpdate: (id: string, updates: any) => void;
+}
+
+const DigitalIdModal: React.FC<DigitalIdModalProps> = ({ vehicle, isDark, onClose, onUpdate }) => {
+  const [localFileira, setLocalFileira] = React.useState(vehicle?.fileira || '');
+  const [localPosicao, setLocalPosicao] = React.useState(vehicle?.posicao || '');
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  const saveToFirestore = async (field: 'fileira' | 'posicao', value: string) => {
+    if (!vehicle?.id) return;
+    setIsSaving(true);
+    try {
+      await updateDoc(doc(db, "vehicles", vehicle.id), { [field]: value });
+      onUpdate(vehicle.id, { [field]: value });
+    } catch (err) {
+      console.error(`Erro ao atualizar ${field}:`, err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const dotsPattern = React.useMemo(() => {
     if (!vehicle) return Array(36).fill(false);
     // Use placard characters to generate a semi-stable "random" pattern
@@ -466,6 +490,41 @@ const DigitalIdModal = ({ vehicle, isDark, onClose }: { vehicle: any | null, isD
            <div className="flex justify-between items-center text-xs">
               <span className="font-bold opacity-40 uppercase">Chassi</span>
               <span className={`font-mono font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{vehicle.chassi}</span>
+           </div>
+           
+           {/* Localização Pátio */}
+           <div className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-orange-50/50 border-orange-100'}`}>
+             <div className="flex items-center justify-between mb-3">
+               <div className="flex items-center gap-2 text-[10px] font-black text-orange-600 uppercase tracking-widest">
+                 <MapPin size={12} />
+                 <span>Posição no Pátio</span>
+               </div>
+               {isSaving && <div className="text-[8px] font-black text-orange-400 animate-pulse uppercase">Salvando...</div>}
+             </div>
+             <div className="grid grid-cols-2 gap-4">
+               <div>
+                  <label className="block text-[8px] font-black uppercase opacity-40 mb-1">Fileira</label>
+                  <input 
+                    type="text"
+                    value={localFileira}
+                    onChange={(e) => setLocalFileira(e.target.value.toUpperCase())}
+                    onBlur={(e) => saveToFirestore('fileira', e.target.value)}
+                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
+                    placeholder="---"
+                  />
+               </div>
+               <div>
+                  <label className="block text-[8px] font-black uppercase opacity-40 mb-1">Posição</label>
+                  <input 
+                    type="text"
+                    value={localPosicao}
+                    onChange={(e) => setLocalPosicao(e.target.value.toUpperCase())}
+                    onBlur={(e) => saveToFirestore('posicao', e.target.value)}
+                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
+                    placeholder="---"
+                  />
+               </div>
+             </div>
            </div>
            <div className="flex justify-between items-center text-xs">
               <span className="font-bold opacity-40 uppercase">Status</span>
@@ -785,6 +844,8 @@ interface Vehicle {
   situacaoDetran?: string; // SITUAÇÃO DETRAN
   enderecoPatio?: string; // ENDEREÇO DO PÁTIO
   municipio: string; // MUNICÍPIO
+  fileira?: string; // FILEIRA
+  posicao?: string; // POSIÇÃO/NÚMERO
   uploadedAt?: any;
   uploadedBy?: string;
   uploadedByEmail?: string;
@@ -1107,8 +1168,10 @@ const App = () => {
     
     const term = dashboardSearchTerm.toLowerCase();
     return results.filter(r => 
-      r.placa.toLowerCase().includes(term) || 
-      r.modelo.toLowerCase().includes(term)
+      String(r.placa || '').toLowerCase().includes(term) || 
+      String(r.modelo || '').toLowerCase().includes(term) ||
+      String(r.fullData?.vehicle?.fileira || '').toLowerCase().includes(term) || 
+      String(r.fullData?.vehicle?.posicao || '').toLowerCase().includes(term)
     );
   }, [inspectedResults, dashboardSearchTerm, dashboardFilterClass]);
 
@@ -1225,7 +1288,7 @@ const App = () => {
     );
 
     frota.forEach(v => {
-      const city = (v.municipio || 'NÃO INFORMADO').toUpperCase();
+      const city = String(v.municipio || 'NÃO INFORMADO').toUpperCase();
       if (!stats[city]) {
         stats[city] = { total: 0, inspected: 0, impediments: 0 };
       }
@@ -1333,7 +1396,7 @@ const App = () => {
   console.log('isAdminMaster check', isAdminMaster);
 
   const getVehicleIcon = (modelo: string) => {
-    const m = (modelo || '').toUpperCase();
+    const m = String(modelo || '').toUpperCase();
     if (m.includes('CAMINHAO') || m.includes('TRUCK') || m.includes('CARGO') || m.includes('VM ')) return <Truck size={20} />;
     if (m.includes('BUS') || m.includes('MICRO') || m.includes('ONIBUS')) return <Bus size={20} />;
     if (m.includes('BIKE') || m.includes('MOTO') || m.includes('CG ') || m.includes('BROS')) return <Bike size={20} />;
@@ -1591,11 +1654,13 @@ const App = () => {
   const impededPlacaSet = new Set(inspectedResults.filter((r: any) => r.class === 'IMPEDIMENTOS' || r.hasImpediment).map((r: any) => r.placa));
 
   const filteredFrotaFinal = frota.filter(v => {
-    if (selectedYard && (v.municipio || '').toUpperCase() !== selectedYard) return false;
+    if (selectedYard && String(v.municipio || '').toUpperCase() !== selectedYard) return false;
 
-    const matchesSearch = v.placa.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          v.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          v.municipio.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = String(v.placa || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v.modelo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v.municipio || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v.fileira || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          String(v.posicao || '').toLowerCase().includes(searchTerm.toLowerCase());
     if (!matchesSearch) return false;
 
     const isVistoriado = evaluatedPlacaSet.has(v.placa);
@@ -1609,12 +1674,12 @@ const App = () => {
     }
 
     if (brandFilter !== 'todos') {
-      const brand = v.modelo.split(' ')[0].toLowerCase();
-      if (brand !== brandFilter.toLowerCase()) return false;
+      const brand = String(v.modelo || '').split(' ')[0].toLowerCase();
+      if (brand !== String(brandFilter || '').toLowerCase()) return false;
     }
 
     if (modelFilter !== 'todos') {
-      if (v.modelo.toLowerCase() !== modelFilter.toLowerCase()) return false;
+      if (String(v.modelo || '').toLowerCase() !== String(modelFilter || '').toLowerCase()) return false;
     }
 
     return true;
@@ -1638,23 +1703,23 @@ const App = () => {
 
   const availableBrands = useMemo(() => {
     const list = selectedYard 
-      ? frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard)
+      ? frota.filter(v => String(v.municipio || '').toUpperCase() === selectedYard)
       : frota;
-    const brands = new Set(list.map(v => v.modelo.split(' ')[0].toUpperCase()));
-    return Array.from(brands).sort();
+    const brands = new Set(list.map(v => String(v.modelo || '').split(' ')[0].toUpperCase()));
+    return Array.from(brands).filter(b => b !== '').sort();
   }, [frota, selectedYard]);
 
   const availableModels = useMemo(() => {
     let list = selectedYard 
-      ? frota.filter(v => (v.municipio || '').toUpperCase() === selectedYard)
+      ? frota.filter(v => String(v.municipio || '').toUpperCase() === selectedYard)
       : frota;
     
     if (brandFilter !== 'todos') {
-      list = list.filter(v => v.modelo.split(' ')[0].toUpperCase() === brandFilter.toUpperCase());
+      list = list.filter(v => String(v.modelo || '').split(' ')[0].toUpperCase() === String(brandFilter || '').toUpperCase());
     }
     
-    const models = new Set(list.map(v => v.modelo.toUpperCase()));
-    return Array.from(models).sort();
+    const models = new Set(list.map(v => String(v.modelo || '').toUpperCase()));
+    return Array.from(models).filter(m => m !== '').sort();
   }, [frota, selectedYard, brandFilter]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -1687,6 +1752,65 @@ const App = () => {
       setShowBulkDeleteConfirm(false);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, "vehicles");
+    } finally {
+      setLoadingTask(null);
+    }
+  };
+
+  const handleBulkDeleteYards = async () => {
+    if (selectedYardsForBulk.length === 0) return;
+    setLoadingTask({ type: 'exclusion', message: 'Apagando pátios...', progress: 0 });
+    try {
+      const vehiclesToDelete = frota.filter(v => 
+        selectedYardsForBulk.includes(String(v.municipio || 'NÃO INFORMADO').toUpperCase())
+      );
+      
+      if (vehiclesToDelete.length === 0) {
+        setSelectedYardsForBulk([]);
+        setShowYardDeleteConfirm(false);
+        setLoadingTask(null);
+        return;
+      }
+
+      const vehicleIds = vehiclesToDelete.map(v => v.id).filter(id => id && id.length > 0);
+      const vehiclePlacas = vehiclesToDelete.map(v => v.placa).filter(p => p && p.length > 0);
+      
+      const chunks = [];
+      for (let i = 0; i < vehicleIds.length; i += 500) {
+        chunks.push(vehicleIds.slice(i, i + 500));
+      }
+
+      let processedCount = 0;
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        for (const id of chunk) {
+          batch.delete(doc(db, "vehicles", id as string));
+        }
+
+        // Also try to find and delete inspections if any
+        // Note: This is simplified. Ideally we'd query by plate if we had many, 
+        // but for a few yards deleting the vehicles is the main goal.
+        // We'll filter the currently loaded inspections to find ones to delete.
+        const inspectionsToDelete = inspectedResults.filter(r => vehiclePlacas.includes(r.placa));
+        for (const insp of inspectionsToDelete) {
+          if (insp.id) {
+            batch.delete(doc(db, "inspections", insp.id));
+          }
+        }
+
+        await batch.commit();
+        processedCount += chunk.length;
+        setLoadingTask({ type: 'exclusion', message: 'Apagando pátios...', progress: (processedCount / vehicleIds.length) * 100 });
+      }
+
+      setFrota(prev => prev.filter(v => !selectedYardsForBulk.includes(String(v.municipio || 'NÃO INFORMADO').toUpperCase())));
+      setInspectedResults(prev => prev.filter(r => !vehiclePlacas.includes(r.placa)));
+      setSelectedYardsForBulk([]);
+      setShowYardDeleteConfirm(false);
+      toast.success(`Pátios removidos com sucesso (${vehiclesToDelete.length} veículos e vistorias vinculadas)`);
+    } catch (err) {
+      console.error("Erro ao apagar pátios:", err);
+      toast.error("Erro ao apagar pátios do servidor");
     } finally {
       setLoadingTask(null);
     }
@@ -2566,12 +2690,7 @@ const App = () => {
                 Cancelar
               </button>
               <button 
-                onClick={() => {
-                  setFrota(prev => prev.filter(v => !selectedYardsForBulk.includes((v.municipio || 'NÃO INFORMADO').toUpperCase())));
-                  setSelectedYardsForBulk([]);
-                  setShowYardDeleteConfirm(false);
-                  toast.success('Pátios e seus veículos removidos com sucesso');
-                }} 
+                onClick={handleBulkDeleteYards} 
                 className="px-6 py-2 bg-red-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-red-700 active:scale-95 transition-all shadow-lg shadow-red-500/20"
               >
                 Sim, Apagar
@@ -3200,6 +3319,8 @@ const App = () => {
                             <option value="modelo">Modelo</option>
                             <option value="ano">Ano</option>
                             <option value="placa">Placa</option>
+                            <option value="fileira">Fileira</option>
+                            <option value="posicao">Posição</option>
                           </select>
                           <button 
                             onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
@@ -3274,6 +3395,14 @@ const App = () => {
                                 <span className={hasImpediment ? 'text-red-500/80' : ''}>Chassi: {v.chassi}</span>
                                 <span>•</span>
                                 <span className={hasImpediment ? 'text-red-500/80' : ''}>Cor: {v.cor || '---'}</span>
+                                {(v.fileira || v.posicao) && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="text-orange-500 font-black">
+                                      LOC: {v.fileira || '---'} | {v.posicao || '---'}
+                                    </span>
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -3314,11 +3443,18 @@ const App = () => {
           </div>
         )}
         {/* Digital ID Modal */}
-        <DigitalIdModal 
-          vehicle={showDigitalId} 
-          isDark={isDark} 
-          onClose={() => setShowDigitalId(null)} 
-        />
+        {showDigitalId && (
+          <DigitalIdModal 
+            key={showDigitalId.id}
+            vehicle={showDigitalId} 
+            isDark={isDark} 
+            onClose={() => setShowDigitalId(null)} 
+            onUpdate={(id, updates) => {
+              setFrota(prev => prev.map(v => v.id === id ? { ...v, ...updates } : v));
+              setShowDigitalId(prev => prev && prev.id === id ? { ...prev, ...updates } : prev);
+            }}
+          />
+        )}
 
         {/* Camera Modal */}
         {isCapturing.active && (
@@ -3619,6 +3755,24 @@ const App = () => {
                                    {laudoData.vehicle.endereco?.cidade ? ` - ${laudoData.vehicle.endereco.cidade}` : ''}
                                    {!(laudoData.vehicle.endereco?.rua || laudoData.vehicle.endereco?.num || laudoData.vehicle.endereco?.cidade) && (laudoData.vehicle.municipio || '-')}
                                  </span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Fileira</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   placeholder="Ex: 01"
+                                   value={laudoData.vehicle.fileira || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, fileira: e.target.value.toUpperCase()}})}
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Posição / Número</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   placeholder="Ex: 05"
+                                   value={laudoData.vehicle.posicao || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, posicao: e.target.value.toUpperCase()}})}
+                                 />
                                </div>
                              </div>
                            </div>

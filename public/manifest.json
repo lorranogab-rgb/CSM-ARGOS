@@ -8,10 +8,16 @@
   "theme_color": "#003B95",
   "icons": [
     {
-      "src": "/Brasao_pequeno.svg",
-      "sizes": "192x192 512x512",
+      "src": "/icon_argos.svg",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    },
+    {
+      "src": "/icon_argos.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }
