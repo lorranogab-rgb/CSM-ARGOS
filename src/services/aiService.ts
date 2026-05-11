@@ -1,6 +1,17 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI() {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not defined. Please set it in the environment variables.");
+    }
+    aiInstance = new GoogleGenAI(apiKey);
+  }
+  return aiInstance;
+}
 
 export interface PhotoAnalysisResult {
   isValid: boolean;
@@ -10,7 +21,8 @@ export interface PhotoAnalysisResult {
 }
 
 export async function analyzeVehiclePhoto(base64Image: string, expectedContent: 'chassi' | 'motor' | 'placa' | 'veiculo_360'): Promise<PhotoAnalysisResult> {
-  const model = "gemini-3-flash-preview";
+  const ai = getAI();
+  const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
   
   const prompt = `Analise esta imagem de um veículo. 
 O conteúdo esperado é: ${expectedContent}.
@@ -21,44 +33,31 @@ Siga estas instruções:
 4. Identifique possíveis danos visuais ou irregularidades.
 5. Retorne os dados em formato JSON.`;
 
-  const response = await ai.models.generateContent({
-    model,
+  const response = await model.generateContent({
     contents: [
       {
+        role: "user",
         parts: [
           { text: prompt },
           {
             inlineData: {
-              mimeType: "image/jpeg", // Assuming jpeg, could be passed as arg
+              mimeType: "image/jpeg",
               data: base64Image.split(',')[1] || base64Image
             }
           }
         ]
       }
     ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          isValid: { type: Type.BOOLEAN, description: "Se a imagem corresponde ao conteúdo esperado" },
-          ocrText: { type: Type.STRING, description: "Texto extraído da placa ou numeração, se aplicável" },
-          detectedIssues: { 
-            type: Type.ARRAY, 
-            items: { type: Type.STRING },
-            description: "Lista de problemas ou danos detectados"
-          },
-          description: { type: Type.STRING, description: "Descrição detalhada da análise" }
-        },
-        required: ["isValid", "detectedIssues", "description"]
-      }
+    generationConfig: {
+      responseMimeType: "application/json"
     }
   });
 
+  const resultText = response.response.text();
   try {
-    return JSON.parse(response.text || '{}') as PhotoAnalysisResult;
+    return JSON.parse(resultText || '{}') as PhotoAnalysisResult;
   } catch (error) {
-    console.error("Erro ao parsear resposta do AI:", error);
+    console.error("Erro ao parsear resposta do AI:", error, resultText);
     return {
       isValid: false,
       detectedIssues: [],
@@ -78,7 +77,8 @@ export interface LaudoPreFill {
 }
 
 export async function analyzeFullVehicle(images: Record<string, string>): Promise<LaudoPreFill> {
-  const model = "gemini-3-flash-preview";
+  const ai = getAI();
+  const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
   
   const prompt = `Analise este conjunto de fotos de um veículo para preencher um laudo técnico.
 Tente identificar:
@@ -113,25 +113,26 @@ Retorne os dados estritamente em formato JSON seguindo este esquema:
     }
   }));
 
-  const response = await ai.models.generateContent({
-    model,
+  const response = await model.generateContent({
     contents: [
       {
+        role: "user",
         parts: [
           { text: prompt },
           ...imageParts
         ]
       }
     ],
-    config: {
+    generationConfig: {
       responseMimeType: "application/json"
     }
   });
 
+  const resultText = response.response.text();
   try {
-    return JSON.parse(response.text || '{}') as LaudoPreFill;
+    return JSON.parse(resultText || '{}') as LaudoPreFill;
   } catch (error) {
-    console.error("Erro ao parsear laudo IA:", error);
+    console.error("Erro ao parsear laudo IA:", error, resultText);
     return {
       generalCondition: "Erro na análise.",
       checklistSuggestions: {},
