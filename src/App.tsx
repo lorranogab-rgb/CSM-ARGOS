@@ -11,7 +11,6 @@ import { getCroppedImg } from './lib/cropUtils';
 import { LoadingArgos } from './components/LoadingArgos';
 import { SpreadsheetEditor } from './components/SpreadsheetEditor';
 import { UserProfile } from './components/UserProfile';
-import { analyzeVehiclePhoto, PhotoAnalysisResult, analyzeFullVehicle } from './services/aiService';
 import { 
   Car, LayoutDashboard, Database, Trash2, FileText, 
   RotateCw, 
@@ -22,7 +21,7 @@ import {
   Undo2, Printer, Save, Pencil, ClipboardList, Wrench, Paintbrush, Zap, Plus,
   Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
-  Truck, Bus, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone,
+  Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone,
   Coins as CoinsIcon
 } from 'lucide-react';
 import { 
@@ -184,6 +183,7 @@ const CHECKLIST_PROBLEMS = {
 const CHECKLIST_KEYS = Object.keys(CHECKLIST_WIZARD_STRUCTURE);
 
 const WIZARD_PHASES = [
+  { id: 'VEÍCULO', label: 'Veículo' },
   { id: 'COMISSÃO', label: 'Comissão' },
   { id: 'SCORE', label: 'Avaliação' },
   { id: 'GIRO', label: 'Giro 360°' },
@@ -1141,127 +1141,6 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
 };
 
 
-const AIAnalysisBadge = ({ result, loading, isDark }: { result?: any; loading?: boolean; isDark: boolean }) => {
-  if (loading) return (
-    <div className="mt-2 flex items-center gap-2 text-xs font-medium animate-pulse text-blue-500">
-      <RotateCw size={14} className="animate-spin" /> Analisando com AI...
-    </div>
-  );
-  
-  if (!result) return null;
-  
-  return (
-    <div className={`mt-2 p-3 rounded-lg border ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-      <div className="flex items-center gap-2 mb-1">
-        {result.isValid ? (
-          <CheckCircle size={14} className="text-green-500" />
-        ) : (
-          <AlertCircle size={14} className="text-amber-500" />
-        )}
-        <span className={`text-xs font-bold ${result.isValid ? 'text-green-500' : 'text-amber-600'}`}>
-          {result.isValid ? 'VALIDADO POR AI' : 'REVISÃO NECESSÁRIA'}
-        </span>
-      </div>
-      {result.ocrText && (
-        <div className="text-[10px] uppercase tracking-wider font-bold text-blue-500 mb-1">
-          Detectado: {result.ocrText}
-        </div>
-      )}
-      <p className={`text-[10px] leading-relaxed ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-        {result.description}
-      </p>
-      {result.detectedIssues && result.detectedIssues.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {result.detectedIssues.map((issue: string, idx: number) => (
-            <span key={idx} className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[9px] font-bold uppercase">
-              {issue}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const PhotoUploadCard = ({ 
-  label, 
-  photo, 
-  field, 
-  icon: Icon, 
-  onRemove, 
-  onCamera, 
-  onFile, 
-  isDark, 
-  analysisResult, 
-  isAnalysing 
-}: any) => (
-  <div id={`photo-card-${field}`} className="space-y-3">
-    <div className="flex justify-between items-center">
-      <label className={`text-sm font-semibold flex items-center ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-        <div className={`w-2 h-2 rounded-full mr-2 ${
-          field === 'chassisPhoto' ? 'bg-amber-500' : 
-          field === 'motorPhoto' ? 'bg-blue-500' : 
-          field === 'platePhoto' ? 'bg-emerald-500' : 'bg-purple-500'
-        }`}></div>
-        {label}
-      </label>
-      {photo && (
-        <button onClick={onRemove} className="text-xs font-semibold text-red-600 hover:text-red-700 transition-colors">Remover Foto</button>
-      )}
-    </div>
-    <div className="relative group">
-      <div className={`border-2 border-dashed h-72 rounded-3xl flex flex-col items-center justify-center cursor-pointer transition-all overflow-hidden ${photo ? (isDark ? 'border-blue-500/50 bg-slate-800' : 'border-blue-500 bg-blue-50/10 shadow-lg shadow-blue-500/5') : (isDark ? 'border-slate-700 hover:border-slate-500 bg-slate-800/50' : 'border-gray-300 hover:border-gray-400 bg-gray-50')}`}>
-        {photo ? (
-          <img src={photo as string} alt={label} className="w-full h-full object-contain px-4" />
-        ) : (
-          <div className="flex flex-col items-center gap-5 px-6 w-full animate-in fade-in duration-500">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-1 transition-all group-hover:scale-110 ${isDark ? 'bg-slate-900 border border-slate-800 text-slate-500' : 'bg-white shadow-xl shadow-gray-200/50 text-gray-400'}`}>
-              <Icon size={32} />
-            </div>
-            
-            <div className="flex gap-3 w-full max-w-xs">
-              <button 
-                id={`btn-camera-${field}`}
-                onClick={onCamera}
-                className={`flex-1 flex flex-col items-center justify-center py-5 rounded-2xl border transition-all active:scale-95 ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400 hover:bg-slate-800 hover:border-blue-500/50' : 'bg-white border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300 shadow-sm'}`}
-              >
-                <Camera size={24} className="mb-2" />
-                <span className="text-[10px] font-black uppercase tracking-widest">Câmera</span>
-              </button>
-              <label 
-                id={`label-file-${field}`}
-                className={`flex-1 flex flex-col items-center justify-center py-5 rounded-2xl border cursor-pointer transition-all active:scale-95 ${isDark ? 'bg-slate-900 border-slate-700 text-green-400 hover:bg-slate-800 hover:border-green-500/50' : 'bg-white border-green-100 text-green-600 hover:bg-green-50 hover:border-green-300 shadow-sm'}`}
-              >
-                <UploadCloud size={24} className="mb-2" />
-                <span className="text-[10px] font-black uppercase tracking-widest">Arquivo</span>
-                <input 
-                  type="file" 
-                  className="hidden" 
-                  accept="image/*" 
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const r = new FileReader();
-                      r.onload = (ev) => {
-                         if (ev.target?.result) onFile(ev.target.result as string);
-                      };
-                      r.readAsDataURL(file);
-                    }
-                    e.target.value = '';
-                  }} 
-                />
-              </label>
-            </div>
-            <p className={`text-[9px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Identificação Mandatória</p>
-          </div>
-        )}
-      </div>
-      <AIAnalysisBadge result={analysisResult} loading={isAnalysing} isDark={isDark} />
-    </div>
-  </div>
-);
-
-
 const App = () => {
   const [activeTab, setActiveTab] = useState('inicio');
   const [theme, setTheme] = useState('light');
@@ -1270,18 +1149,13 @@ const App = () => {
   const [laudoData, setLaudoData] = useState<any>(null);
   const [viewingVehicleDetails, setViewingVehicleDetails] = useState<any>(null);
   const [showDigitalId, setShowDigitalId] = useState<Vehicle | null>(null);
-  const [wizPhase, setWizPhase] = useState('COMISSÃO'); 
-  const [wizSubPhase, setWizSubPhase] = useState('REGIONAL');
+  const [wizPhase, setWizPhase] = useState('VEÍCULO'); 
+  const [wizSubPhase, setWizSubPhase] = useState('TIPO');
   const [wizStep, setWizStep] = useState(0);
   const [acceptResponsibility, setAcceptResponsibility] = useState(false);
   const [inspectedResults, setInspectedResults] = useState<Inspection[]>([]);
   const [dashboardSearchTerm, setDashboardSearchTerm] = useState('');
   const [dashboardFilterClass, setDashboardFilterClass] = useState('TODOS');
-  const [aiAnalyses, setAiAnalyses] = useState<Record<string, PhotoAnalysisResult>>({});
-  const [isAnalysing, setIsAnalysing] = useState<Record<string, boolean>>({});
-  const [iaLaudoPhotos, setIaLaudoPhotos] = useState<Record<string, string>>({});
-  const [isIaProcessing, setIsIaProcessing] = useState(false);
-  const [iaPreviewData, setIaPreviewData] = useState<any>(null);
 
   const filteredInspectedResults = useMemo(() => {
     let results = inspectedResults;
@@ -1393,43 +1267,7 @@ const App = () => {
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
         const dataUrl = canvas.toDataURL('image/jpeg');
-        const field = isCapturing.field;
-        setLaudoData({ ...laudoData, [field]: dataUrl });
-        
-        // Trigger AI Analysis for captured photo
-        const targetFields: any = { 
-          chassisPhoto: 'chassi', 
-          motorPhoto: 'motor', 
-          platePhoto: 'placa', 
-          photo360: 'veiculo_360' 
-        };
-        
-        if (targetFields[field]) {
-          setIsAnalysing(prev => ({ ...prev, [field]: true }));
-          analyzeVehiclePhoto(dataUrl, targetFields[field] as any).then(result => {
-             setAiAnalyses(prev => ({ ...prev, [field]: result }));
-             setIsAnalysing(prev => ({ ...prev, [field]: false }));
-             if (result.isValid) {
-               const labels = { chassi: 'Chassi', motor: 'Motor', placa: 'Placa', veiculo_360: 'Giro 360°' };
-               toast.success(`AI: ${labels[targetFields[field]]} validado.`);
-               
-               // Auto-fill plate if detected and confirmed valid
-               if (targetFields[field] === 'placa' && result.ocrText && result.ocrText.length >= 7) {
-                 setLaudoData(prev => ({
-                   ...prev,
-                   vehicle: { ...prev.vehicle, placa: result.ocrText?.toUpperCase() }
-                 }));
-                 toast.info(`Placa detectada e preenchida: ${result.ocrText}`);
-               }
-             } else {
-               toast.warning(`AI: Verifique a foto; identificação não confirmada.`);
-             }
-          }).catch(err => {
-             console.error("AI Analysis Error:", err);
-             setIsAnalysing(prev => ({ ...prev, [field]: false }));
-          });
-        }
-        
+        setLaudoData({ ...laudoData, [isCapturing.field]: dataUrl });
         stopCamera();
       }
     }
@@ -2431,10 +2269,10 @@ const App = () => {
         },
         agency: { nome: "CORPO DE BOMBEIROS MILITAR DO PARANÁ", fone: "", presidente: "", membro1: "", membro2: "", portaria: "", dioe: "", processo: "", ano_proc: "2026", protocolo: "", regional: "" },
         scores: {}, checklist: defaultChecklist, diagnostics: {}, checklistDiagnostics: {}, description: "",
-        chassisPhoto: null, motorPhoto: null, platePhoto: null, photo360: null
+        chassisPhoto: null, motorPhoto: null
       });
     }
-    setWizPhase('COMISSÃO'); setWizStep(0); setWizSubPhase('REGIONAL');
+    setWizPhase('VEÍCULO'); setWizStep(0); setWizSubPhase('TIPO');
     setViewMode(false); setActiveTab('wizard');
   };
 
@@ -2526,7 +2364,7 @@ const App = () => {
   };
 
   const prevWizard = () => {
-    if (wizPhase === 'COMISSÃO' && wizSubPhase === 'REGIONAL') {
+    if (wizPhase === 'VEÍCULO') {
       setActiveTab('selecao');
       return;
     }
@@ -2535,6 +2373,8 @@ const App = () => {
     else if (wizPhase === 'GIRO') { setWizPhase('SCORE'); setWizStep(SCORE_CATEGORIES.length - 1); }
     else if (wizPhase === 'SCORE') { setWizPhase('COMISSÃO'); setWizSubPhase('INTEGRANTES'); }
     else if (wizPhase === 'COMISSÃO' && wizSubPhase === 'INTEGRANTES') setWizSubPhase('REGIONAL');
+    else if (wizPhase === 'COMISSÃO' && wizSubPhase === 'REGIONAL') { setWizPhase('RESTRIÇÕES'); }
+    else if (wizPhase === 'RESTRIÇÕES') { setWizPhase('VEÍCULO'); setWizSubPhase('CONFIRMAÇÃO'); }
   };
 
   const deleteLaudo = (laudoId: string) => {
@@ -2563,53 +2403,11 @@ const App = () => {
     if (!cropImage || !croppedAreaPixels) return;
     try {
       const croppedImg = await getCroppedImg(cropImage.src, croppedAreaPixels, rotation);
-      
-      let field = 'chassisPhoto';
-      let aiType: 'chassi' | 'motor' | 'placa' | 'veiculo_360' = 'chassi';
-      
       if (cropImage.type === 'chassis') {
-        field = 'chassisPhoto';
-        aiType = 'chassi';
-      } else if (cropImage.type === 'motor') {
-        field = 'motorPhoto';
-        aiType = 'motor';
-      } else if (cropImage.type === 'plate') {
-        field = 'platePhoto';
-        aiType = 'placa';
-      } else if (cropImage.type === '360') {
-        field = 'photo360';
-        aiType = 'veiculo_360';
+        setLaudoData({...laudoData, chassisPhoto: croppedImg});
+      } else {
+        setLaudoData({...laudoData, motorPhoto: croppedImg});
       }
-      
-      setLaudoData({...laudoData, [field]: croppedImg});
-      
-      // Trigger AI Analysis
-      setIsAnalysing(prev => ({ ...prev, [field]: true }));
-      
-      analyzeVehiclePhoto(croppedImg, aiType).then(result => {
-        setAiAnalyses(prev => ({ ...prev, [field]: result }));
-        setIsAnalysing(prev => ({ ...prev, [field]: false }));
-        
-        if (result.isValid) {
-          const labels = { chassi: 'Chassi', motor: 'Motor', placa: 'Placa', veiculo_360: 'Giro 360°' };
-          toast.success(`Análise AI: ${labels[aiType]} validado com sucesso.`);
-          
-          // Auto-fill plate if detected and confirmed valid
-          if (aiType === 'placa' && result.ocrText && result.ocrText.length >= 7) {
-            setLaudoData(prev => ({
-              ...prev,
-              vehicle: { ...prev.vehicle, placa: result.ocrText?.toUpperCase() }
-            }));
-            toast.info(`Placa detectada e preenchida: ${result.ocrText}`);
-          }
-        } else {
-          toast.warning(`Análise AI: O conteúdo da foto parece divergente do esperado.`);
-        }
-      }).catch(err => {
-        console.error("AI Analysis Error:", err);
-        setIsAnalysing(prev => ({ ...prev, [field]: false }));
-      });
-
       setCropImage(null);
       setRotation(0);
       setZoom(1);
@@ -3070,17 +2868,6 @@ const App = () => {
           >
             <ShieldCheck size={20} />
             <span className="text-sm text-left">Laudos Prontos</span>
-          </button>
-
-          <button 
-            onClick={() => { setActiveTab('laudo_ia'); setIsMenuOpen(false); }} 
-            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'laudo_ia' ? (isDark ? 'bg-purple-600/10 text-purple-400 font-bold' : 'bg-purple-50 text-purple-700 font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
-          >
-            <Zap size={20} className={activeTab === 'laudo_ia' ? 'text-purple-500' : ''} />
-            <div className="flex flex-col">
-              <span className="text-sm text-left">Laudo IA</span>
-              <span className="text-[8px] font-black uppercase tracking-widest text-purple-500">Beta</span>
-            </div>
           </button>
 
           <div className="pt-8 mt-auto flex flex-col space-y-4">
@@ -3818,6 +3605,187 @@ const App = () => {
               <div id="wizard-content" className={`mt-10 p-6 md:p-10 rounded-3xl border border-dashed text-center min-h-[400px] flex flex-col justify-center relative overflow-hidden transition-all duration-500 ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
                  <div className={`absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-10 pointer-events-none transition-colors ${isDark ? 'bg-blue-500' : 'bg-[#003B95]'}`}></div>
                  
+                 {wizPhase === 'VEÍCULO' && (
+                    <div className="text-left">
+                       {wizSubPhase === 'TIPO' && (
+                         <div className="animate-in fade-in duration-500">
+                            <h3 className={`text-xl font-bold mb-6 ${isDark ? 'text-white' : 'text-gray-900'}`}>Tipo de Bem Avaliado</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                               {[
+                                 { id: 'Veículo', icon: <Car />, desc: 'Carros, Caminhões, Ônibus' },
+                                 { id: 'Embarcação', icon: <Anchor />, desc: 'Barcos, Lanchas, Motores' },
+                                 { id: 'Aeronave', icon: <Plane />, desc: 'Aviões, Helicópteros' }
+                               ].map(t => (
+                                 <button 
+                                   key={t.id}
+                                   onClick={() => {
+                                     setLaudoData({ ...laudoData, assetType: t.id });
+                                     setWizSubPhase('CONFIRMAÇÃO');
+                                   }}
+                                   className={`p-6 rounded-2xl border-2 transition-all text-left flex flex-col items-start gap-4 ${laudoData.assetType === t.id ? 'border-blue-500 bg-blue-500/10' : (isDark ? 'border-slate-800 bg-slate-900/50 hover:border-slate-700' : 'border-gray-100 bg-gray-50 hover:border-gray-200')}`}
+                                 >
+                                    <div className={`p-3 rounded-lg ${laudoData.assetType === t.id ? 'bg-blue-500 text-white' : (isDark ? 'bg-slate-800 text-slate-400' : 'bg-white text-gray-400 shadow-sm')}`}>
+                                       {t.icon}
+                                    </div>
+                                    <div>
+                                       <p className={`font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{t.id}</p>
+                                       <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t.desc}</p>
+                                    </div>
+                                 </button>
+                               ))}
+                            </div>
+                         </div>
+                       )}
+
+                       {wizSubPhase === 'CONFIRMAÇÃO' && (
+                         <div className="animate-in fade-in duration-500">
+                           <div className="flex flex-col md:flex-row md:items-center space-y-2 md:space-y-0 md:space-x-4 mb-8">
+                              <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}><Car size={24} /></div>
+                              <div>
+                                <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Dados do {laudoData.assetType}</h3>
+                                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Confirme as informações antes de prosseguir</p>
+                              </div>
+                           </div>
+
+                           <div className={`p-6 rounded-lg border ${isDark ? 'bg-slate-900/50 border-slate-700' : 'bg-gray-50 border-gray-200'}`}>
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Marc./Mod./Espec.</span>
+                                 <span className={`block text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{laudoData.vehicle.modelo || '-'}</span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Placa / Identificação</span>
+                                 <span className={`block text-base font-bold text-[#003B95] dark:text-blue-400`}>{laudoData.vehicle.placa || '-'}</span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Chassi / Casco / Série</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium font-mono ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.chassi || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, chassi: e.target.value}})}
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Motor / Propulsão</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium font-mono ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.motor || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, motor: e.target.value}})}
+                                 />
+                               </div>
+                               {laudoData.assetType === 'Embarcação' && (
+                                  <div>
+                                    <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Inscrição na Marinha</span>
+                                    <input 
+                                      className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                      placeholder="EX: 123A456789"
+                                      value={laudoData.vehicle.inscricaoMarinha || ''}
+                                      onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, inscricaoMarinha: e.target.value}})}
+                                    />
+                                  </div>
+                               )}
+                               {laudoData.assetType === 'Aeronave' && (
+                                  <div>
+                                    <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Matrícula (Prefixo)</span>
+                                    <input 
+                                      className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                      placeholder="EX: PT-XYZ"
+                                      value={laudoData.vehicle.matriculaAeronave || ''}
+                                      onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, matriculaAeronave: e.target.value}})}
+                                    />
+                                  </div>
+                               )}
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                   {laudoData.assetType === 'Veículo' ? 'KM Atual' : (laudoData.assetType === 'Embarcação' ? 'Horas de Uso' : 'Horas de Vôo')}
+                                 </span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.km || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, km: e.target.value}})}
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Renavam</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium font-mono ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.renavam || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, renavam: e.target.value}})}
+                                   placeholder="Informe o RENAVAM"
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Combustível</span>
+                                 <select 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   value={laudoData.vehicle.comb || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, comb: e.target.value}})}
+                                 >
+                                   <option value="">Selecione...</option>
+                                   <option value="GASOLINA">GASOLINA</option>
+                                   <option value="ÁLCOOL">ÁLCOOL</option>
+                                   <option value="FLEX">FLEX</option>
+                                   <option value="DIESEL">DIESEL</option>
+                                   <option value="GNV">GNV</option>
+                                   <option value="ELÉTRICO">ELÉTRICO</option>
+                                 </select>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Ano Fab./Mod.</span>
+                                 <span className={`block text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{laudoData.vehicle.ano || '-'}</span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Cor</span>
+                                 <span className={`block text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{laudoData.vehicle.cor || '-'}</span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">100% Tab. Fipe / Mercado</span>
+                                 <span className={`block text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                   {Number(laudoData.vehicle.fipe).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) || '-'}
+                                 </span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Patrimônio GPM</span>
+                                 <span className={`block text-base font-medium font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{laudoData.vehicle.patrimonio || '-'}</span>
+                               </div>
+                               <div className="md:col-span-2">
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Endereço da Lotação</span>
+                                 <span className={`block text-base font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                   {[laudoData.vehicle.endereco?.rua, laudoData.vehicle.endereco?.num].filter(Boolean).join(', ')}
+                                   {laudoData.vehicle.endereco?.cidade ? ` - ${laudoData.vehicle.endereco.cidade}` : ''}
+                                   {!(laudoData.vehicle.endereco?.rua || laudoData.vehicle.endereco?.num || laudoData.vehicle.endereco?.cidade) && (laudoData.vehicle.municipio || '-')}
+                                 </span>
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Fileira</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   placeholder="Ex: 01"
+                                   value={laudoData.vehicle.fileira || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, fileira: e.target.value.toUpperCase()}})}
+                                 />
+                               </div>
+                               <div>
+                                 <span className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Posição / Número</span>
+                                 <input 
+                                   className={`w-full p-2 rounded-lg border text-base font-medium ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-100 text-gray-900'}`}
+                                   placeholder="Ex: 05"
+                                   value={laudoData.vehicle.posicao || ''}
+                                   onChange={e => setLaudoData({...laudoData, vehicle: {...laudoData.vehicle, posicao: e.target.value.toUpperCase()}})}
+                                 />
+                               </div>
+                             </div>
+                           </div>
+
+                           <div className="pt-8 flex justify-between">
+                             <button onClick={() => setWizSubPhase('TIPO')} className={`px-6 py-2 rounded-md font-bold text-sm ${isDark ? 'bg-slate-700 text-white' : 'bg-gray-100 text-gray-600'}`}>Voltar</button>
+                             <button onClick={() => setWizPhase('RESTRIÇÕES')} className="bg-[#003B95] text-white px-8 py-3 rounded-md font-semibold text-sm hover:bg-blue-800 transition-colors">Confirmar e Prosseguir</button>
+                           </div>
+                         </div>
+                       )}
+                    </div>
+                 )}
+
                  {wizPhase === 'RESTRIÇÕES' && (
                     <div className="text-left animate-in fade-in duration-500">
                        <div className="flex flex-col md:flex-row md:items-center space-y-2 md:space-y-0 md:space-x-4 mb-8">
@@ -4187,7 +4155,7 @@ const App = () => {
                        </div>
                     </div>
                  )}
-                  {wizPhase === 'EVIDÊNCIAS' && (
+                 {wizPhase === 'EVIDÊNCIAS' && (
                     <div id="wizard-active-content" className="text-left">
                        <div className="flex flex-col md:flex-row md:items-center space-y-2 md:space-y-0 md:space-x-4 mb-8">
                           <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 border ${isDark ? 'bg-slate-900 border-slate-700 text-amber-500' : 'bg-amber-50 border-amber-100 text-amber-600'}`}><Camera size={24} /></div>
@@ -4198,54 +4166,158 @@ const App = () => {
                        </div>
 
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <PhotoUploadCard 
-                            label="Número do Chassi" 
-                            photo={laudoData.chassisPhoto} 
-                            field="chassisPhoto" 
-                            icon={Camera} 
-                            onRemove={() => setLaudoData({...laudoData, chassisPhoto: null})} 
-                            onCamera={() => startCamera('chassisPhoto')} 
-                            onFile={(src: string) => setCropImage({ src, type: 'chassis' })} 
-                            isDark={isDark} 
-                            analysisResult={aiAnalyses['chassisPhoto']} 
-                            isAnalysing={isAnalysing['chassisPhoto']}
-                          />
-                          <PhotoUploadCard 
-                            label="Número do Motor" 
-                            photo={laudoData.motorPhoto} 
-                            field="motorPhoto" 
-                            icon={Cog} 
-                            onRemove={() => setLaudoData({...laudoData, motorPhoto: null})} 
-                            onCamera={() => startCamera('motorPhoto')} 
-                            onFile={(src: string) => setCropImage({ src, type: 'motor' })} 
-                            isDark={isDark} 
-                            analysisResult={aiAnalyses['motorPhoto']} 
-                            isAnalysing={isAnalysing['motorPhoto']}
-                          />
-                          <PhotoUploadCard 
-                            label="Placa do Veículo" 
-                            photo={laudoData.platePhoto} 
-                            field="platePhoto" 
-                            icon={Tag} 
-                            onRemove={() => setLaudoData({...laudoData, platePhoto: null})} 
-                            onCamera={() => startCamera('platePhoto')} 
-                            onFile={(src: string) => setCropImage({ src, type: 'plate' })} 
-                            isDark={isDark} 
-                            analysisResult={aiAnalyses['platePhoto']} 
-                            isAnalysing={isAnalysing['platePhoto']}
-                          />
-                          <PhotoUploadCard 
-                            label="Foto do Veículo (360°)" 
-                            photo={laudoData.photo360} 
-                            field="photo360" 
-                            icon={RotateCw} 
-                            onRemove={() => setLaudoData({...laudoData, photo360: null})} 
-                            onCamera={() => startCamera('photo360')} 
-                            onFile={(src: string) => setCropImage({ src, type: '360' })} 
-                            isDark={isDark} 
-                            analysisResult={aiAnalyses['photo360']} 
-                            isAnalysing={isAnalysing['photo360']}
-                          />
+                          <div className="space-y-3">
+                             <div className="flex justify-between items-center">
+                                <label className={`text-sm font-semibold flex items-center ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                                   <div className="w-2 h-2 rounded-full bg-amber-500 mr-2"></div>
+                                   Número do Chassi
+                                </label>
+                                {laudoData.chassisPhoto && (
+                                   <button onClick={() => setLaudoData({...laudoData, chassisPhoto: null})} className="text-xs font-semibold text-red-600 hover:text-red-700">Remover</button>
+                                )}
+                             </div>
+                             <div className="relative group">
+                                <label className={`border-2 border-dashed h-64 rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors overflow-hidden ${laudoData.chassisPhoto ? (isDark ? 'border-amber-500/50 bg-slate-800' : 'border-amber-500 bg-amber-50/10') : (isDark ? 'border-slate-700 hover:border-slate-500 bg-slate-800/50' : 'border-gray-300 hover:border-gray-400 bg-gray-50')}`}>
+                                   {laudoData.chassisPhoto ? (
+                                      <img src={laudoData.chassisPhoto as string} alt="Chassi" className="w-full h-full object-contain" />
+                                   ) : (
+                                      <div className={`flex flex-col items-center ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDark ? 'bg-slate-900 group-hover:bg-slate-700' : 'bg-gray-200 group-hover:bg-gray-300'}`}>
+                                            <Camera size={24} className={isDark ? 'text-slate-500' : 'text-gray-600'} />
+                                         </div>
+
+                                       <div className="flex flex-col items-center gap-4 px-6 w-full">
+                                          <div className="flex gap-2 w-full max-w-xs">
+                                             <button 
+                                                onClick={() => startCamera('chassisPhoto')}
+                                                className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400 hover:bg-slate-800' : 'bg-white border-blue-100 text-blue-600 hover:bg-blue-50'}`}
+                                             >
+                                                <Camera size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Câmera</span>
+                                             </button>
+                                             <label className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border cursor-pointer transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-green-400 hover:bg-slate-800' : 'bg-white border-green-100 text-green-600 hover:bg-green-50'}`}>
+                                                <UploadCloud size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Arquivo</span>
+                                                <input 
+                                                   type="file" 
+                                                   className="hidden" 
+                                                   accept="image/*" 
+                                                   onChange={(e) => {
+                                                      const file = e.target.files?.[0];
+                                                      if (file) {
+                                                        const r = new FileReader();
+                                                        r.onload = (ev) => {
+                                                           if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'chassis' });
+                                                        };
+                                                        r.readAsDataURL(file);
+                                                      }
+                                                      e.target.value = '';
+                                                   }} 
+                                                />
+                                             </label>
+                                          </div>
+                                          <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Captura de Identificação</p>
+                                       </div>
+                                         <span className="text-xs mt-1">Câmera ou Arquivo</span>
+                                      </div>
+                                   )}
+                                   <input 
+                                      type="file" 
+                                      className="hidden" 
+                                      accept="image/*" 
+                                      capture="environment"
+                                      onChange={(e) => {
+                                         const file = e.target.files?.[0];
+                                         if (file) {
+                                           const r = new FileReader();
+                                           r.onload = (ev) => {
+                                              if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'chassis' });
+                                           };
+                                           r.readAsDataURL(file);
+                                         }
+                                         e.target.value = '';
+                                      }} 
+                                   />
+                                </label>
+                             </div>
+                          </div>
+
+                          <div className="space-y-3">
+                             <div className="flex justify-between items-center">
+                                <label className={`text-sm font-semibold flex items-center ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                                   <div className="w-2 h-2 rounded-full bg-blue-500 mr-2"></div>
+                                   Número do Motor
+                                </label>
+                                {laudoData.motorPhoto && (
+                                   <button onClick={() => setLaudoData({...laudoData, motorPhoto: null})} className="text-xs font-semibold text-red-600 hover:text-red-700">Remover</button>
+                                )}
+                             </div>
+                             <div className="relative group">
+                                <label className={`border-2 border-dashed h-64 rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors overflow-hidden ${laudoData.motorPhoto ? (isDark ? 'border-blue-500/50 bg-slate-800' : 'border-blue-500 bg-blue-50/10') : (isDark ? 'border-slate-700 hover:border-slate-500 bg-slate-800/50' : 'border-gray-300 hover:border-gray-400 bg-gray-50')}`}>
+                                   {laudoData.motorPhoto ? (
+                                      <img src={laudoData.motorPhoto as string} alt="Motor" className="w-full h-full object-contain" />
+                                   ) : (
+                                      <div className={`flex flex-col items-center ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 transition-colors ${isDark ? 'bg-slate-900 group-hover:bg-slate-700' : 'bg-gray-200 group-hover:bg-gray-300'}`}>
+                                            <Cog size={24} className={isDark ? 'text-slate-500' : 'text-gray-600'} />
+                                         </div>
+
+
+                                       <div className="flex flex-col items-center gap-4 px-6 w-full">
+                                          <div className="flex gap-2 w-full max-w-xs">
+                                             <button 
+                                                onClick={() => startCamera('motorPhoto')}
+                                                className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-blue-400 hover:bg-slate-800' : 'bg-white border-blue-100 text-blue-600 hover:bg-blue-50'}`}
+                                             >
+                                                <Camera size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Câmera</span>
+                                             </button>
+                                             <label className={`flex-1 flex flex-col items-center justify-center py-6 rounded-xl border cursor-pointer transition-all ${isDark ? 'bg-slate-900 border-slate-700 text-green-400 hover:bg-slate-800' : 'bg-white border-green-100 text-green-600 hover:bg-green-50'}`}>
+                                                <UploadCloud size={28} className="mb-2" />
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">Arquivo</span>
+                                                <input 
+                                                   type="file" 
+                                                   className="hidden" 
+                                                   accept="image/*" 
+                                                   onChange={(e) => {
+                                                      const file = e.target.files?.[0];
+                                                      if (file) {
+                                                        const r = new FileReader();
+                                                        r.onload = (ev) => {
+                                                           if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'motor' });
+                                                        };
+                                                        r.readAsDataURL(file);
+                                                      }
+                                                      e.target.value = '';
+                                                   }} 
+                                                />
+                                             </label>
+                                          </div>
+                                          <p className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Captura de Identificação</p>
+                                       </div>
+                                         <span className="text-xs mt-1">Câmera ou Arquivo</span>
+                                      </div>
+                                   )}
+                                   <input 
+                                      type="file" 
+                                      className="hidden" 
+                                      accept="image/*" 
+                                      capture="environment"
+                                      onChange={(e) => {
+                                         const file = e.target.files?.[0];
+                                         if (file) {
+                                           const r = new FileReader();
+                                           r.onload = (ev) => {
+                                              if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'motor' });
+                                           };
+                                           r.readAsDataURL(file);
+                                         }
+                                         e.target.value = '';
+                                      }} 
+                                   />
+                                </label>
+                             </div>
+                          </div>
                        </div>
                        
                        <div className="mt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -4253,7 +4325,7 @@ const App = () => {
                             <ChevronLeft size={16} className="mr-1" /> Voltar
                           </button>
                           <button onClick={nextWizard} className="w-full sm:w-auto px-8 py-3 rounded-md font-semibold text-sm transition-colors bg-green-600 text-white hover:bg-green-700">
-                             Gerar Laudo Mímico Final
+                             Gerar Laudo Mímico
                           </button>
                        </div>
                     </div>
@@ -4445,6 +4517,7 @@ const App = () => {
              </div>
            </div>
         )}
+
 
         {activeTab === 'dashboard' && (
            <div className="max-w-7xl mx-auto py-8">
@@ -4761,207 +4834,6 @@ const App = () => {
             </div>
           </div>
         )}
-
-        {activeTab === 'laudo_ia' && (
-          <div className="max-w-5xl mx-auto pt-4 pb-12 px-6">
-            <header className="mb-10">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-purple-500/10 rounded-lg text-purple-500">
-                  <Zap size={20} />
-                </div>
-                <span className="text-xs font-black uppercase tracking-widest text-purple-500">Inteligência Artificial (Beta)</span>
-              </div>
-              <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Laudo IA</h1>
-              <p className={`text-lg font-medium opacity-60 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Capture as fotos do veículo e deixe a IA preencher o laudo automaticamente.</p>
-            </header>
-
-            {!iaPreviewData ? (
-              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {[
-                    { id: 'frente', label: 'Frente', icon: <CarFront size={24} /> },
-                    { id: 'traseira', label: 'Traseira', icon: <Truck size={24} /> },
-                    { id: 'lateral_esq', label: 'Lateral Esquerda', icon: <ChevronLeft size={24} /> },
-                    { id: 'lateral_dir', label: 'Lateral Direita', icon: <ChevronRight size={24} /> },
-                  ].map((group) => (
-                    <div key={group.id} className={`p-6 rounded-3xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'} flex flex-col items-center gap-4`}>
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-gray-50 text-gray-400'}`}>
-                        {group.icon}
-                      </div>
-                      <h3 className="font-bold uppercase text-[10px] tracking-widest">{group.label}</h3>
-                      <div className="grid grid-cols-2 gap-2 w-full">
-                        {[1, 2, 3, 4].map(idx => {
-                          const photoKey = `${group.id}_${idx}`;
-                          return (
-                            <label key={photoKey} className={`aspect-square rounded-xl border-2 border-dashed flex items-center justify-center cursor-pointer transition-all overflow-hidden relative group ${iaLaudoPhotos[photoKey] ? 'border-emerald-500/50' : (isDark ? 'border-slate-800 hover:border-purple-500/50' : 'border-gray-100 hover:border-purple-200')}`}>
-                              {iaLaudoPhotos[photoKey] ? (
-                                <>
-                                  <img src={iaLaudoPhotos[photoKey]} className="w-full h-full object-cover" alt="Captured" />
-                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <Trash2 size={16} className="text-white" onClick={(e) => { e.preventDefault(); setIaLaudoPhotos(prev => { const n = {...prev}; delete n[photoKey]; return n; }); }} />
-                                  </div>
-                                </>
-                              ) : (
-                                <Camera size={16} className="opacity-20" />
-                              )}
-                              <input 
-                                type="file" 
-                                className="hidden" 
-                                accept="image/*" 
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    const reader = new FileReader();
-                                    reader.onload = (ev) => setIaLaudoPhotos(prev => ({ ...prev, [photoKey]: ev.target?.result as string }));
-                                    reader.readAsDataURL(file);
-                                  }
-                                }} 
-                              />
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex justify-center pt-8">
-                  <button 
-                    disabled={Object.keys(iaLaudoPhotos).length === 0 || isIaProcessing}
-                    onClick={async () => {
-                      setIsIaProcessing(true);
-                      try {
-                        const result = await analyzeFullVehicle(iaLaudoPhotos);
-                        setIaPreviewData(result);
-                        toast.success("Análise IA concluída com sucesso!");
-                      } catch (error) {
-                        console.error(error);
-                        toast.error("Erro ao processar as imagens.");
-                      } finally {
-                        setIsIaProcessing(false);
-                      }
-                    }}
-                    className={`h-16 px-12 rounded-[2rem] font-black uppercase tracking-widest text-sm transition-all flex items-center gap-3 shadow-xl ${Object.keys(iaLaudoPhotos).length === 0 || isIaProcessing ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-500 shadow-purple-900/30'}`}
-                  >
-                    {isIaProcessing ? <RotateCw size={24} className="animate-spin" /> : <Zap size={24} />}
-                    {isIaProcessing ? "Processando Imagens..." : "Gerar Laudo Automático"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-8 animate-in zoom-in-95 duration-500">
-                <div className={`p-8 rounded-[2.5rem] border ${isDark ? 'bg-slate-900 border-slate-800 shadow-purple-950/20' : 'bg-white border-gray-100 shadow-2xl shadow-purple-100'} relative overflow-hidden`}>
-                   <div className="absolute top-0 right-0 p-8 opacity-5">
-                      <Zap size={120} />
-                   </div>
-                   
-                   <div className="flex items-center gap-4 mb-8">
-                      <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-500">
-                        <ShieldCheck size={24} />
-                      </div>
-                      <div>
-                        <h2 className="text-2xl font-black tracking-tight">Sugestão de Preenchimento</h2>
-                        <p className="text-sm opacity-50">Avalie os dados detectados pela IA e aprove para os formulários oficiais.</p>
-                      </div>
-                   </div>
-
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                      <div className="space-y-6">
-                        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-500 border-b border-purple-500/20 pb-2">Identificação Detectada</h3>
-                        <div className="space-y-4">
-                          {[
-                            { label: 'Marca', value: iaPreviewData.brand },
-                            { label: 'Modelo', value: iaPreviewData.model },
-                            { label: 'Cor', value: iaPreviewData.color },
-                            { label: 'Placa', value: iaPreviewData.plate },
-                          ].map(item => (
-                            <div key={item.label} className="flex flex-col border-b border-gray-100 dark:border-slate-800 pb-2">
-                              <span className="text-[9px] font-black uppercase tracking-wider opacity-40">{item.label}</span>
-                              <span className="text-base font-bold">{item.value || 'N/A'}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-6">
-                        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-500 border-b border-purple-500/20 pb-2">Checklist Sugerido</h3>
-                        <div className="grid grid-cols-2 gap-4 text-center">
-                          {Object.entries(iaPreviewData.checklistSuggestions || {}).map(([key, val]: any) => (
-                            <div key={key} className={`p-4 rounded-2xl border ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-gray-50 border-gray-100'}`}>
-                              <span className="block text-[8px] font-black uppercase tracking-widest mb-1 opacity-50">{key}</span>
-                              <span className={`text-xs font-black uppercase px-2 py-0.5 rounded-full ${
-                                val === 'bom' ? 'bg-emerald-500/10 text-emerald-500' : 
-                                val === 'regular' ? 'bg-amber-500/10 text-amber-500' : 'bg-red-500/10 text-red-500'
-                              }`}>
-                                {val}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                   </div>
-
-                   <div className="mt-12 p-6 rounded-3xl bg-purple-500/5 border border-purple-500/10">
-                      <h4 className="text-[10px] font-black uppercase mb-3 flex items-center gap-2">
-                        <Info size={12} />
-                        Parecer da IA
-                      </h4>
-                      <p className="text-sm font-medium italic opacity-70 leading-relaxed mb-4">
-                        "{iaPreviewData.generalCondition}"
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {iaPreviewData.detectedIssues?.map((issue: string, i: number) => (
-                          <span key={i} className="text-[9px] font-bold bg-amber-500/10 text-amber-500 px-2 py-1 rounded-lg">
-                            • {issue}
-                          </span>
-                        ))}
-                      </div>
-                   </div>
-
-                   <div className="mt-12 flex flex-col sm:flex-row gap-4 justify-end">
-                      <button 
-                        onClick={() => setIaPreviewData(null)}
-                        className={`h-14 px-8 rounded-2xl font-black text-xs uppercase tracking-widest transition-all border ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200'}`}
-                      >
-                        Descartar e Voltar
-                      </button>
-                      <button 
-                        onClick={() => {
-                          const newLaudoData = {
-                            ...iaPreviewData,
-                            vehicle: {
-                              ...laudoData.vehicle,
-                              placa: iaPreviewData.plate || '',
-                              cor: iaPreviewData.color || '',
-                              marcaModelo: `${iaPreviewData.brand || ''} ${iaPreviewData.model || ''}`.trim(),
-                            },
-                            items: {
-                              ...laudoData.items,
-                              pintura: iaPreviewData.checklistSuggestions.pintura || 'bom',
-                              pneus: iaPreviewData.checklistSuggestions.pneus || 'bom',
-                              vidros: iaPreviewData.checklistSuggestions.vidros || 'bom',
-                              lanternas: iaPreviewData.checklistSuggestions.lanternas || 'bom',
-                              interior: iaPreviewData.checklistSuggestions.interior || 'bom',
-                            },
-                            parecerTecnico: iaPreviewData.generalCondition,
-                          };
-                          setLaudoData(newLaudoData);
-                          setActiveTab('mimico');
-                          setViewMode(false);
-                          toast.success("Dados preenchidos no laudo mímico!");
-                        }}
-                        className="h-14 px-10 rounded-2xl bg-purple-600 text-white font-black text-xs uppercase tracking-widest hover:bg-purple-500 transition-all shadow-xl shadow-purple-900/20 flex items-center justify-center gap-3"
-                      >
-                        <ShieldCheck size={18} />
-                        Aprovar e Ir para Formulário
-                      </button>
-                   </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         </div>
         {/* Hidden container for PDF export */}
         {(laudoDataToPrint || laudoData) && (

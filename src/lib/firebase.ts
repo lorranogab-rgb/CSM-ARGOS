@@ -10,11 +10,6 @@ import {
 import { getFirestore, doc, getDocFromServer, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Ensure config is valid before initializing
-if (!firebaseConfig || !firebaseConfig.apiKey) {
-  console.error("Firebase configuration is missing or invalid. Check firebase-applet-config.json");
-}
-
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
@@ -87,7 +82,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Ensure connection works
+// Ensure config is valid
+if (!firebaseConfig || !firebaseConfig.apiKey) {
+  console.error("Firebase configuration is missing or invalid. Check firebase-applet-config.json");
+}
+
 async function testConnection() {
   if (!firebaseConfig || !firebaseConfig.apiKey) return;
   try {
