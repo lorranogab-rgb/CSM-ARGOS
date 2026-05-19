@@ -1275,9 +1275,10 @@ const App = () => {
   const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
   const [selectedYardsForBulk, setSelectedYardsForBulk] = useState<string[]>([]);
   const [showYardDeleteConfirm, setShowYardDeleteConfirm] = useState(false);
+  const [editingYard, setEditingYard] = useState<{ originalName: string; name: string; address: string } | null>(null);
 
   const yardStats = useMemo(() => {
-    const stats: Record<string, { total: number; inspected: number; impediments: number }> = {};
+    const stats: Record<string, { total: number; inspected: number; impediments: number; address: string }> = {};
     
     // Lista de placas com vistorias e impedimentos para cruzamento rápido
     const inspectedPlates = new Set(inspectedResults.map(r => r.placa));
@@ -1290,9 +1291,13 @@ const App = () => {
     frota.forEach(v => {
       const city = String(v.municipio || 'NÃO INFORMADO').toUpperCase();
       if (!stats[city]) {
-        stats[city] = { total: 0, inspected: 0, impediments: 0 };
+        stats[city] = { total: 0, inspected: 0, impediments: 0, address: '' };
       }
       stats[city].total += 1;
+      
+      if (v.enderecoPatio && !stats[city].address) {
+        stats[city].address = v.enderecoPatio;
+      }
       
       if (inspectedPlates.has(v.placa)) {
         stats[city].inspected += 1;
@@ -1811,6 +1816,63 @@ const App = () => {
     } catch (err) {
       console.error("Erro ao apagar pátios:", err);
       toast.error("Erro ao apagar pátios do servidor");
+    } finally {
+      setLoadingTask(null);
+    }
+  };
+
+  const handleRenameYard = async () => {
+    if (!editingYard) return;
+    const { originalName, name, address } = editingYard;
+    
+    if (!name.trim()) {
+      toast.error("O nome do pátio não pode estar vazio.");
+      return;
+    }
+
+    setLoadingTask({ type: 'loading', message: 'Atualizando pátio...' });
+    
+    try {
+      const vehiclesInYard = frota.filter(v => String(v.municipio || 'NÃO INFORMADO').toUpperCase() === originalName);
+      
+      const chunks = [];
+      const batchSize = 500;
+      for (let i = 0; i < vehiclesInYard.length; i += batchSize) {
+        chunks.push(vehiclesInYard.slice(i, i + batchSize));
+      }
+
+      let processed = 0;
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach(v => {
+          if (v.id) {
+            batch.update(doc(db, "vehicles", v.id), {
+              municipio: name.trim().toUpperCase(),
+              enderecoPatio: address.trim()
+            });
+          }
+        });
+        await batch.commit();
+        processed += chunk.length;
+        setLoadingTask({ type: 'loading', message: 'Atualizando pátio...', progress: (processed / vehiclesInYard.length) * 100 });
+      }
+
+      // Local state update
+      setFrota(prev => prev.map(v => 
+        String(v.municipio || 'NÃO INFORMADO').toUpperCase() === originalName 
+          ? { ...v, municipio: name.trim().toUpperCase(), enderecoPatio: address.trim() }
+          : v
+      ));
+
+      if (selectedYard === originalName) {
+        setSelectedYard(name.trim().toUpperCase());
+      }
+
+      toast.success(`Pátio '${originalName}' atualizado com sucesso (${vehiclesInYard.length} veículos).`);
+      setEditingYard(null);
+    } catch (err) {
+      console.error("Erro ao atualizar pátio:", err);
+      toast.error("Erro ao atualizar pátio no servidor");
     } finally {
       setLoadingTask(null);
     }
@@ -2670,6 +2732,60 @@ const App = () => {
         </div>
       )}
 
+      {editingYard && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className={`relative w-full max-w-md p-8 rounded-3xl border shadow-2xl animate-in zoom-in-95 duration-300 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
+            <div className="flex items-center space-x-3 mb-6">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                <Pencil size={24} />
+              </div>
+              <div>
+                <h3 className={`text-xl font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>Editar Pátio</h3>
+                <p className="text-xs font-bold opacity-50 uppercase tracking-widest">{editingYard.originalName}</p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className={`block text-[10px] font-black uppercase tracking-widest mb-1.5 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Nome do Pátio (Município)</label>
+                <input 
+                  type="text"
+                  value={editingYard.name}
+                  onChange={(e) => setEditingYard({ ...editingYard, name: e.target.value })}
+                  className={`w-full h-12 px-4 rounded-xl border font-bold text-sm transition-all outline-none focus:ring-2 focus:ring-blue-500 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
+                  placeholder="Ex: CURITIBA - PAROLIN"
+                />
+              </div>
+
+              <div>
+                <label className={`block text-[10px] font-black uppercase tracking-widest mb-1.5 ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Endereço Completo</label>
+                <textarea 
+                  value={editingYard.address}
+                  onChange={(e) => setEditingYard({ ...editingYard, address: e.target.value })}
+                  className={`w-full h-24 p-4 rounded-xl border font-bold text-sm transition-all outline-none focus:ring-2 focus:ring-blue-500 resize-none ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
+                  placeholder="Ex: Rua Alferes Poli, 2000 - Parolin, Curitiba - PR"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-8">
+              <button 
+                onClick={() => setEditingYard(null)} 
+                className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleRenameYard} 
+                className="px-8 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-700 active:scale-95 transition-all shadow-xl shadow-blue-500/20"
+              >
+                Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showYardDeleteConfirm && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-300">
           <div className={`relative w-full max-w-sm p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-300 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
@@ -3201,7 +3317,23 @@ const App = () => {
                                 {percent}% Progresso
                               </div>
                             </div>
-                            <div className={`text-base font-black uppercase tracking-tight mb-4 truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>{city}</div>
+                            <div className="flex justify-between items-center mb-1">
+                              <div className={`text-base font-black uppercase tracking-tight truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>{city}</div>
+                              {isAdminMaster && (
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingYard({ originalName: city, name: city, address: stats.address || '' });
+                                  }}
+                                  className={`p-1.5 rounded-lg transition-colors shrink-0 ml-2 ${isDark ? 'hover:bg-white/10 text-slate-500 hover:text-blue-400' : 'hover:bg-gray-100 text-gray-400 hover:text-blue-600'}`}
+                                >
+                                  <Pencil size={16} />
+                                </button>
+                              )}
+                            </div>
+                            <div className={`text-[10px] font-black uppercase tracking-widest opacity-70 mb-4 line-clamp-2 min-h-[1.5rem] leading-tight ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                               {stats.address || 'Endereço não informado'}
+                            </div>
                             
                             <div className="flex items-center justify-between mb-4">
                               <div className="flex items-baseline gap-1">
@@ -4458,9 +4590,25 @@ const App = () => {
                        </h3>
                        <p className={`text-[10px] font-bold uppercase tracking-widest opacity-50 mb-4 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                          Pátio de Gestão Regional
-                       </p>
-                       
-                       <div className="space-y-4">
+                        </p>
+                        {isAdminMaster && (
+                          <div className="absolute top-24 right-5 p-2 transition-all">
+                             <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingYard({ originalName: city, name: city, address: stats.address || '' });
+                                }}
+                                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-500 hover:text-blue-400' : 'hover:bg-gray-100 text-gray-400 hover:text-blue-600'}`}
+                             >
+                               <Pencil size={18} />
+                             </button>
+                          </div>
+                        )}
+                        <p className={`text-[10px] font-black uppercase tracking-widest opacity-80 mb-4 mt-[-10px] ${isDark ? 'text-blue-600' : 'text-blue-600'}`}>
+                          {stats.address || 'Endereço não informado'}
+                        </p>
+                        
+                        <div className="space-y-4">
                          <div className="flex items-center justify-between">
                             <div className="flex items-baseline gap-1">
                                <span className="text-3xl font-black text-blue-500">{stats.inspected}</span>
