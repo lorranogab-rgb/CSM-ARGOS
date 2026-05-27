@@ -323,6 +323,15 @@ const MimicoFormIV = ({ data, update, readOnly }) => {
   const col2 = CHECKLIST_MASTER_LIST.slice(13, 26);
   const col3 = CHECKLIST_MASTER_LIST.slice(26, 39);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [data.description]);
+
   return (
     <div className="bg-white text-black p-10 mx-auto text-[10px]" style={{ width: "210mm", minHeight: "297mm", fontFamily: "\"Inter\", \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif" }}>
       <MimicoHeader subtitulo="FORMULÁRIO IV" regional={data.agency.regional} />
@@ -377,7 +386,7 @@ const MimicoFormIV = ({ data, update, readOnly }) => {
         </div>
       </div>
 
-      <div className="border border-black mb-0 overflow-hidden text-black text-black text-black text-black text-black"><p className="bg-gray-100 p-0.5 font-bold  border-b border-black uppercase leading-none text-black text-black">4. CHECK-LIST</p><div className="grid grid-cols-3 divide-x border-black border-b border-black text-black text-black"><ChecklistCol items={col1} laudoData={data} update={update} readOnly={readOnly} /><ChecklistCol items={col2} laudoData={data} update={update} readOnly={readOnly} /><ChecklistCol items={col3} laudoData={data} update={update} readOnly={readOnly} /></div><div className="p-1 min-h-[45px]  border-b border-black font-bold uppercase text-left text-black text-black"><p className="font-bold  mb-0.5 italic text-black text-black">Descrição:</p><textarea disabled={readOnly} className="w-full h-12 bg-transparent border-none focus:outline-none  font-normal italic leading-tight resize-none text-black text-black text-black text-black text-[10px]" value={data.description} onChange={e=>update({...data, description: e.target.value})} /></div></div>
+      <div className="border border-black mb-0 overflow-hidden text-black text-black text-black text-black text-black"><p className="bg-gray-100 p-0.5 font-bold  border-b border-black uppercase leading-none text-black text-black">4. CHECK-LIST</p><div className="grid grid-cols-3 divide-x border-black border-b border-black text-black text-black"><ChecklistCol items={col1} laudoData={data} update={update} readOnly={readOnly} /><ChecklistCol items={col2} laudoData={data} update={update} readOnly={readOnly} /><ChecklistCol items={col3} laudoData={data} update={update} readOnly={readOnly} /></div><div className="p-1 min-h-[45px]  border-b border-black font-bold uppercase text-left text-black text-black"><p className="font-bold  mb-0.5 italic text-black text-black">Descrição:</p><textarea ref={textareaRef} disabled={readOnly} style={{ height: 'auto', overflow: 'hidden' }} className="w-full bg-transparent border-none focus:outline-none font-normal italic leading-tight resize-none text-black text-[10px]" value={data.description} onChange={e=>update({...data, description: e.target.value})} /></div></div>
 
       <div className="border-x-2 border-b-2 border-black mt-2 overflow-hidden text-left font-bold uppercase text-black text-black text-black">
         <p className="bg-gray-100 p-0.5 font-bold  border-b border-black text-center uppercase text-black text-black">5. AVALIAÇÃO</p>
@@ -846,6 +855,7 @@ interface Vehicle {
   municipio: string; // MUNICÍPIO
   fileira?: string; // FILEIRA
   posicao?: string; // POSIÇÃO/NÚMERO
+  notes?: string; // NOTAS DO VEÍCULO
   uploadedAt?: any;
   uploadedBy?: string;
   uploadedByEmail?: string;
@@ -920,8 +930,28 @@ const formatDate = (date: any) => {
   }
 };
 
-const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspection, isDark, isVistoriado, inspectedResults }: any) => {
+const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspection, isDark, isVistoriado, inspectedResults, onUpdate }: any) => {
+  const [localNotes, setLocalNotes] = React.useState(vehicle?.notes || '');
+  const [isSavingNotes, setIsSavingNotes] = React.useState(false);
+
   if (!vehicle) return null;
+
+  const saveNotes = async () => {
+    if (!vehicle.id) return;
+    setIsSavingNotes(true);
+    try {
+      await updateDoc(doc(db, "vehicles", vehicle.id), { notes: localNotes });
+      if (onUpdate) {
+        onUpdate(vehicle.id, { notes: localNotes });
+      }
+      toast.success("Notas do veículo atualizadas com sucesso!");
+    } catch (err) {
+      console.error("Erro ao salvar notas:", err);
+      toast.error("Erro ao salvar notas no servidor.");
+    } finally {
+      setIsSavingNotes(false);
+    }
+  };
 
   const inspection = inspectedResults.find((r: any) => r.placa === vehicle.placa);
   const hasImpediment = inspection?.hasImpediment || inspection?.class === 'IMPEDIMENTOS';
@@ -1104,6 +1134,53 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
            )}
         </div>
 
+            {/* Notes Section */}
+            <div className={`p-6 rounded-2xl border mb-6 ${isDark ? 'bg-slate-800/30 border-slate-700/50' : 'bg-gray-50 border-gray-100 shadow-sm'}`}>
+               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                  <div className="flex items-center gap-2">
+                     <FileText size={18} className="text-[#002FA7] shrink-0" />
+                     <div>
+                        <h3 className={`text-xs font-black uppercase tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Notas / Observações</h3>
+                        <p className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-gray-500'} font-medium`}>Anotações internas sobre o estado, documentação ou localização do veículo.</p>
+                     </div>
+                  </div>
+                  {localNotes !== (vehicle.notes || '') && (
+                     <button
+                        onClick={saveNotes}
+                        disabled={isSavingNotes}
+                        className="px-3 py-1.5 rounded-xl bg-[#003B95] hover:bg-blue-800 disabled:bg-blue-600/50 text-white text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 shadow-md shrink-0 animate-in zoom-in-95"
+                     >
+                        {isSavingNotes ? (
+                           <>
+                              <RotateCw className="animate-spin" size={10} />
+                              <span>Salvando...</span>
+                           </>
+                        ) : (
+                           <>
+                              <Save size={10} />
+                              <span>Salvar Notas</span>
+                           </>
+                        )}
+                     </button>
+                  )}
+               </div>
+               
+               <textarea
+                  value={localNotes}
+                  onChange={(e) => setLocalNotes(e.target.value)}
+                  placeholder="Escreva notas ou observações específicas sobre o veículo aqui..."
+                  rows={3}
+                  className={`w-full p-3 rounded-lg border text-xs focus:ring-1 focus:ring-blue-500 outline-none transition-colors resize-none ${
+                     isDark 
+                        ? 'bg-slate-950 border-slate-800 text-slate-300 placeholder:text-slate-600 focus:border-slate-700' 
+                        : 'bg-white border-gray-200 text-gray-800 placeholder:text-gray-400 focus:border-blue-400'
+                  }`}
+               />
+               {localNotes === (vehicle.notes || '') && vehicle.notes && (
+                  <p className="text-[9px] text-emerald-500 font-bold mt-1 text-right">✓ Notas gravadas sob a placa {vehicle.placa}</p>
+               )}
+            </div>
+
         {/* FOOTER ACTIONS */}
         <div className={`p-6 border-t flex flex-col sm:flex-row gap-4 shrink-0 ${isDark ? 'border-slate-800 bg-slate-900/50' : 'border-gray-100 bg-gray-50/50'}`}>
            <button 
@@ -1261,12 +1338,30 @@ const App = () => {
   const capturePhoto = () => {
     if (videoRef.current) {
       const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+      const originalWidth = videoRef.current.videoWidth;
+      const originalHeight = videoRef.current.videoHeight;
+
+      // Downscale to max 1200x1200px to avoid huge Base64 payload exceeding Firestore's 1MB limit
+      const MAX_DIM = 1200;
+      let targetWidth = originalWidth;
+      let targetHeight = originalHeight;
+
+      if (originalWidth > MAX_DIM || originalHeight > MAX_DIM) {
+        if (originalWidth > originalHeight) {
+          targetHeight = Math.round((originalHeight * MAX_DIM) / originalWidth);
+          targetWidth = MAX_DIM;
+        } else {
+          targetWidth = Math.round((originalWidth * MAX_DIM) / originalHeight);
+          targetHeight = MAX_DIM;
+        }
+      }
+
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0);
-        const dataUrl = canvas.toDataURL('image/jpeg');
+        ctx.drawImage(videoRef.current, 0, 0, originalWidth, originalHeight, 0, 0, targetWidth, targetHeight);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
         setLaudoData({ ...laudoData, [isCapturing.field]: dataUrl });
         stopCamera();
       }
@@ -1321,6 +1416,7 @@ const App = () => {
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>([]);
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [showBulkLaudosDeleteConfirm, setShowBulkLaudosDeleteConfirm] = useState(false);
   const [laudoDataToPrint, setLaudoDataToPrint] = useState<any>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
   const [loadingTask, setLoadingTask] = useState<{ type: 'inclusion' | 'exclusion' | 'loading'; message?: string; progress?: number } | null>(null);
@@ -2457,6 +2553,42 @@ const App = () => {
     }
   };
 
+  const handleBulkDeleteLaudos = async () => {
+    if (selectedLaudos.length === 0) return;
+    setLoadingTask({ type: 'exclusion', message: 'Excluindo vistorias...', progress: 0 });
+    try {
+      const chunks = [];
+      for (let i = 0; i < selectedLaudos.length; i += 500) {
+        chunks.push(selectedLaudos.slice(i, i + 500));
+      }
+
+      let processedCount = 0;
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        for (const id of chunk) {
+          if (id && id.length > 5) {
+            batch.delete(doc(db, "inspections", id));
+          }
+        }
+        await batch.commit();
+        processedCount += chunk.length;
+        setLoadingTask({ type: 'exclusion', message: 'Excluindo vistorias...', progress: (processedCount / selectedLaudos.length) * 100 });
+      }
+
+      setInspectedResults(prev => prev.filter(r => !selectedLaudos.includes(r.id)));
+      setSelectedLaudos([]);
+      setIsExportMode(false);
+      setShowBulkLaudosDeleteConfirm(false);
+      toast.success(`${selectedLaudos.length} vistorias excluídas com sucesso.`);
+      fetchInitialData();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, "inspections");
+      toast.error("Erro ao excluir vistorias no servidor.");
+    } finally {
+      setLoadingTask(null);
+    }
+  };
+
   const handleCropComplete = (_, croppedAreaPixelsParam) => {
     setCroppedAreaPixels(croppedAreaPixelsParam);
   };
@@ -2500,6 +2632,7 @@ const App = () => {
   };
 
   const saveFinal = async () => {
+    setLoadingTask({ type: 'loading', message: 'Salvando laudo no servidor...' });
     try {
       const totalScore = Object.values(laudoData.scores).reduce((acc: number, b: any) => acc + (b.v || 0), 0);
       const impediments = checkImpediments(laudoData.restrictions);
@@ -2564,10 +2697,14 @@ const App = () => {
         await updateDoc(vRef, vToUpdate);
       }
 
+      toast.success("Laudo gravado com sucesso!");
       fetchInitialData();
       setActiveTab('dashboard');
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, "inspections");
+      console.error("Erro ao salvar laudo:", e);
+      toast.error("Erro ao gravar o laudo no servidor. Imagens grandes ou erro de rede.");
+    } finally {
+      setLoadingTask(null);
     }
   };
 
@@ -2726,6 +2863,29 @@ const App = () => {
                 className="px-6 py-2 bg-red-600 text-white rounded-md font-semibold text-sm hover:bg-red-700 active:scale-95 transition-all shadow-sm shadow-red-500/20"
                >
                  Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkLaudosDeleteConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className={`relative w-full max-w-sm p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-300 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
+            <div className="flex items-center space-x-3 mb-4">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-red-900/30 text-red-400' : 'bg-red-50 text-red-500'}`}>
+                <Trash2 size={20} />
+              </div>
+              <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Excluir Vistorias</h3>
+            </div>
+            <p className={`text-sm mb-6 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>Tem certeza que deseja excluir {selectedLaudos.length} vistorias em lote? Esta ação é de caráter permanente e não poderá ser desfeita.</p>
+            <div className="flex justify-end space-x-3">
+              <button onClick={() => setShowBulkLaudosDeleteConfirm(false)} className={`px-4 py-2 rounded-md font-semibold text-sm transition-colors ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}>Cancelar</button>
+              <button 
+                onClick={handleBulkDeleteLaudos} 
+                className="px-6 py-2 bg-red-600 text-white rounded-md font-semibold text-sm hover:bg-red-700 active:scale-95 transition-all shadow-sm shadow-red-500/20"
+               >
+                 Excluir em Lote
               </button>
             </div>
           </div>
@@ -3522,6 +3682,12 @@ const App = () => {
                                 }`}>
                                   {v.placa}
                                 </span>
+                                {v.notes && (
+                                  <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full animate-pulse" title={v.notes}>
+                                    <FileText size={10} />
+                                    <span>Nota</span>
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-3 text-[10px] font-bold opacity-40 uppercase tracking-tighter">
                                 <span className={hasImpediment ? 'text-red-500/80' : ''}>Chassi: {v.chassi}</span>
@@ -4508,6 +4674,149 @@ const App = () => {
                 {!viewMode && <button onClick={saveFinal} className="bg-emerald-800 text-white px-8 py-2 rounded-2xl text-xs font-black uppercase shadow-2xl active:scale-95 transition-all"><Save size={18} /></button>}
               </div>
             </header>
+            {!viewMode && (
+              <div className="w-full max-w-4xl mb-6 p-6 rounded-2xl border border-[#003B95]/30 bg-slate-900/40 backdrop-blur-md text-left animate-in fade-in slide-in-from-top-4 duration-300 print:hidden shadow-xl shadow-black/20">
+                <div className="flex items-center space-x-3 mb-6">
+                  <div className="bg-[#003B95]/20 p-2.5 rounded-xl border border-[#003B95]/40 text-blue-400">
+                    <Camera size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm uppercase tracking-wider text-white">Substituir Evidências Físicas</h3>
+                    <p className="text-[11px] text-slate-400 font-medium">Substitua as fotos do número do chassi e do motor de forma rápida e segura neste laudo</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Chassis col */}
+                  <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-xs font-bold text-slate-300 uppercase flex items-center">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-2"></span>
+                          Número do Chassi
+                        </span>
+                        {laudoData.chassisPhoto && (
+                          <button 
+                            onClick={() => setLaudoData({...laudoData, chassisPhoto: null})} 
+                            className="text-[10px] font-bold text-red-400 hover:text-red-300 uppercase transition-colors"
+                          >
+                            Remover Foto
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className="w-full h-36 rounded-lg bg-slate-950 border border-slate-800/80 overflow-hidden flex items-center justify-center mb-4 relative">
+                        {laudoData.chassisPhoto ? (
+                          <img src={laudoData.chassisPhoto as string} alt="Chassi" className="w-full h-full object-contain" />
+                        ) : (
+                          <div className="text-slate-600 flex flex-col items-center">
+                            <Camera size={28} className="opacity-40 mb-1" />
+                            <span className="text-[10px] uppercase font-bold tracking-wider">Sem Imagem</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-1 right-2 bg-slate-900/90 border border-slate-800 px-1.5 rounded text-[9px] font-mono font-bold text-slate-400 uppercase">
+                          {laudoData.vehicle?.chassi || 'N/D'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => startCamera('chassisPhoto')}
+                        className="flex-1 py-2 px-3 rounded-lg border border-slate-800 bg-slate-900 text-blue-400 hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-[10px] font-extrabold uppercase tracking-wide"
+                      >
+                        <Camera size={14} />
+                        Câmera
+                      </button>
+                      <label className="flex-1 py-2 px-3 rounded-lg border border-slate-800 bg-slate-900 text-green-400 hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-[10px] font-extrabold uppercase tracking-wide cursor-pointer">
+                        <UploadCloud size={14} />
+                        Arquivo
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const r = new FileReader();
+                              r.onload = (ev) => {
+                                if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'chassis' });
+                              };
+                              r.readAsDataURL(file);
+                            }
+                            e.target.value = '';
+                          }} 
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Motor col */}
+                  <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-xs font-bold text-slate-300 uppercase flex items-center">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-2"></span>
+                          Número do Motor
+                        </span>
+                        {laudoData.motorPhoto && (
+                          <button 
+                            onClick={() => setLaudoData({...laudoData, motorPhoto: null})} 
+                            className="text-[10px] font-bold text-red-400 hover:text-red-300 uppercase transition-colors"
+                          >
+                            Remover Foto
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className="w-full h-36 rounded-lg bg-slate-950 border border-slate-800/80 overflow-hidden flex items-center justify-center mb-4 relative">
+                        {laudoData.motorPhoto ? (
+                          <img src={laudoData.motorPhoto as string} alt="Motor" className="w-full h-full object-contain" />
+                        ) : (
+                          <div className="text-slate-600 flex flex-col items-center">
+                            <Camera size={28} className="opacity-40 mb-1" />
+                            <span className="text-[10px] uppercase font-bold tracking-wider">Sem Imagem</span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-1 right-2 bg-slate-900/90 border border-slate-800 px-1.5 rounded text-[9px] font-mono font-bold text-slate-400 uppercase">
+                          {laudoData.vehicle?.motor || 'N/D'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => startCamera('motorPhoto')}
+                        className="flex-1 py-2 px-3 rounded-lg border border-slate-800 bg-slate-900 text-blue-400 hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-[10px] font-extrabold uppercase tracking-wide"
+                      >
+                        <Camera size={14} />
+                        Câmera
+                      </button>
+                      <label className="flex-1 py-2 px-3 rounded-lg border border-slate-800 bg-slate-900 text-green-400 hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-[10px] font-extrabold uppercase tracking-wide cursor-pointer">
+                        <UploadCloud size={14} />
+                        Arquivo
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const r = new FileReader();
+                              r.onload = (ev) => {
+                                if (ev.target?.result) setCropImage({ src: ev.target.result as string, type: 'motor' });
+                              };
+                              r.readAsDataURL(file);
+                            }
+                            e.target.value = '';
+                          }} 
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="w-full overflow-auto pb-8 print:hidden">
                <div className="bg-white shadow-[0_50px_100px_rgba(0,0,0,0.5)] p-4 ring-2 ring-black min-w-[210mm] w-max mx-auto h-max mb-10 text-black">
                  {page === 1 ? <MimicoFormI data={laudoData} update={setLaudoData} readOnly={viewMode} /> : <MimicoFormIV data={laudoData} update={setLaudoData} readOnly={viewMode} />}
@@ -4776,12 +5085,21 @@ const App = () => {
                           <span className="hidden sm:inline">Exportar Laudos</span>
                           <span className="sm:hidden">Laudos</span>
                         </button>
+                        <button onClick={() => setIsExportMode(true)} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
+                          <Trash2 size={18} className="opacity-50 text-red-500" />
+                          <span className="hidden sm:inline">Excluir em Lote</span>
+                          <span className="sm:hidden">Excluir</span>
+                        </button>
                      </>
                    ) : (
                      <>
                         <button onClick={handleBulkExport} disabled={bulkExporting || selectedLaudos.length === 0} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${isDark ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20'}`}>
                           {bulkExporting ? <RotateCw size={18} className="animate-spin" /> : <Printer size={18} />}
-                          <span>{bulkExporting ? "Processando..." : `Confirmar (${selectedLaudos.length})`}</span>
+                          <span>{bulkExporting ? "Processando..." : `Exportar (${selectedLaudos.length})`}</span>
+                        </button>
+                        <button onClick={() => { if (selectedLaudos.length > 0) setShowBulkLaudosDeleteConfirm(true); }} disabled={selectedLaudos.length === 0} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${isDark ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/20'}`}>
+                          <Trash2 size={18} />
+                          <span>Confirmar Exclusão (${selectedLaudos.length})</span>
                         </button>
                         <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`h-14 px-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
                           <X size={18} />
@@ -5011,6 +5329,7 @@ const App = () => {
 
         {viewingVehicleDetails && (
           <VehicleDetailsModal 
+            key={viewingVehicleDetails.id}
             vehicle={viewingVehicleDetails}
             onClose={() => setViewingVehicleDetails(null)}
             onStartInspection={handleStartInspectionFromDetails}
@@ -5018,6 +5337,10 @@ const App = () => {
             isDark={isDark}
             isVistoriado={evaluatedPlacaSet.has(viewingVehicleDetails.placa)}
             inspectedResults={inspectedResults}
+            onUpdate={(id: string, updates: any) => {
+              setFrota((prev) => prev.map((v) => v.id === id ? { ...v, ...updates } : v));
+              setViewingVehicleDetails((prev: any) => prev && prev.id === id ? { ...prev, ...updates } : prev);
+            }}
           />
         )}
       </main>

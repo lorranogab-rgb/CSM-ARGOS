@@ -21,6 +21,7 @@ export interface Vehicle {
   situacaoDetran?: string; // SITUAÇÃO DETRAN
   enderecoPatio?: string; // ENDEREÇO DO PÁTIO
   municipio: string; // MUNICÍPIO
+  notes?: string; // NOTAS DO VEÍCULO
   uploadedAt?: { toMillis: () => number } | null; // Firestore Timestamp
   uploadedBy?: string;
   uploadedByEmail?: string;
