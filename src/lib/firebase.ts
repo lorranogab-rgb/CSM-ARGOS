@@ -1,32 +1,42 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   GoogleAuthProvider, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
   initializeAuth,
+  getAuth,
   browserPopupRedirectResolver,
-  browserSessionPersistence
+  browserSessionPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
+  Auth
 } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, enableMultiTabIndexedDbPersistence, Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Enable offline persistence
-enableMultiTabIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-      console.warn('Persistence failed-precondition: multiple tabs open.');
-  } else if (err.code === 'unimplemented') {
-      console.warn('Persistence unimplemented: browser not supported.');
-  }
-});
+let firestoreDb: Firestore;
+try {
+  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  enableMultiTabIndexedDbPersistence(firestoreDb).catch(() => {
+    // Silent catch for sandboxed environments where indexedDB is disabled
+  });
+} catch {
+  firestoreDb = getFirestore(app);
+}
+export const db = firestoreDb;
 
-// Initialize Auth with specific settings for better iframe support
-export const auth = initializeAuth(app, {
-  persistence: browserSessionPersistence,
-  popupRedirectResolver: browserPopupRedirectResolver
-});
+let authInstance: Auth;
+try {
+  authInstance = initializeAuth(app, {
+    persistence: [browserSessionPersistence, browserLocalPersistence, indexedDBLocalPersistence],
+    popupRedirectResolver: browserPopupRedirectResolver
+  });
+} catch {
+  authInstance = getAuth(app);
+}
+export const auth = authInstance;
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -86,16 +96,3 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 if (!firebaseConfig || !firebaseConfig.apiKey) {
   console.error("Firebase configuration is missing or invalid. Check firebase-applet-config.json");
 }
-
-async function testConnection() {
-  if (!firebaseConfig || !firebaseConfig.apiKey) return;
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    const err = error as { message?: string };
-    if(err.message?.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-testConnection();

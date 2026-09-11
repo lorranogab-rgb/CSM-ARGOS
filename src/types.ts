@@ -1,4 +1,6 @@
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 export interface Vehicle {
   id: string;
   _ord?: number | string;
@@ -49,6 +51,11 @@ export interface Inspection {
   class: string;
   data: string;
   fullData: Record<string, unknown>;
+  valuationPercent?: number;
+  hasImpediment?: boolean;
+  items?: any[];
+  inspectedAt?: { toMillis: () => number } | null | any;
+  inspectedBy?: string;
   updatedAt?: { toMillis: () => number } | null;
   inspectorEmail?: string;
   status?: 'pending' | 'approved' | 'rejected';
@@ -56,4 +63,5 @@ export interface Inspection {
   reviewedAt?: { toMillis: () => number } | null;
   reviewNotes?: string;
   history?: InspectionHistory[];
+  [key: string]: any;
 }

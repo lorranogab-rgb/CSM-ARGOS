@@ -62,9 +62,9 @@ export async function getCroppedImg(
 
   ctx.putImageData(data, 0, 0)
 
-  // Compress and resize cropped image to prevent exceeding Firestore 1MB limit
-  const MAX_WIDTH = 1000;
-  const MAX_HEIGHT = 1000;
+  // Compress and resize cropped image to guarantee Firestore payload is always < 100KB
+  const MAX_WIDTH = 800;
+  const MAX_HEIGHT = 800;
   let targetWidth = pixelCrop.width;
   let targetHeight = pixelCrop.height;
 
@@ -76,16 +76,16 @@ export async function getCroppedImg(
       targetWidth = Math.round((targetWidth * MAX_HEIGHT) / targetHeight);
       targetHeight = MAX_HEIGHT;
     }
-
-    const resizeCanvas = document.createElement('canvas');
-    resizeCanvas.width = targetWidth;
-    resizeCanvas.height = targetHeight;
-    const resizeCtx = resizeCanvas.getContext('2d');
-    if (resizeCtx) {
-      resizeCtx.drawImage(canvas, 0, 0, pixelCrop.width, pixelCrop.height, 0, 0, targetWidth, targetHeight);
-      return resizeCanvas.toDataURL('image/jpeg', 0.7);
-    }
   }
 
-  return canvas.toDataURL('image/jpeg', 0.7);
+  const resizeCanvas = document.createElement('canvas');
+  resizeCanvas.width = targetWidth;
+  resizeCanvas.height = targetHeight;
+  const resizeCtx = resizeCanvas.getContext('2d');
+  if (resizeCtx) {
+    resizeCtx.drawImage(canvas, 0, 0, pixelCrop.width, pixelCrop.height, 0, 0, targetWidth, targetHeight);
+    return resizeCanvas.toDataURL('image/jpeg', 0.65);
+  }
+
+  return canvas.toDataURL('image/jpeg', 0.65);
 }

@@ -11,15 +11,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerified() {
-      return isSignedIn() && (
-        request.auth.token.email_verified == true || 
-        request.auth.token.email == 'lorranogab@gmail.com' ||
-        request.auth.token.email == 'cbmpr.leilao@gmail.com' ||
-        request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2'
-      );
-    }
-
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'lorranogab@gmail.com' ||
@@ -37,48 +28,30 @@ service cloud.firestore {
 
     // 2. Validation Blueprints
     function isValidVehicle(data) {
-      return data.keys().hasAll(['placa', 'uploadedAt', 'uploadedBy'])
-        && data.placa is string && data.placa.size() <= 128
-        && (data.uploadedBy == request.auth.uid || isAdmin());
+      return data.keys().hasAll(['placa'])
+        && data.placa is string && data.placa.size() <= 128;
     }
 
     function isValidInspection(data) {
-      return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData', 'inspectedAt', 'inspectedBy'])
+      return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData'])
         && data.placa is string && data.placa.size() <= 128
         && data.modelo is string && data.modelo.size() <= 512
         && data.nota is number
-        && data.fullData is map
-        && (data.inspectedBy == request.auth.uid || isAdmin());
+        && data.fullData is map;
     }
 
     // 3. Collection Rules
     match /vehicles/{vehicleId} {
-      allow get: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
-      allow list: if isSignedIn() && (isAdmin() || resource.data.uploadedBy == request.auth.uid);
-      
-      allow create: if isVerified() 
-                    && isValidId(vehicleId)
-                    && (isAdmin() || (isValidVehicle(incoming()) && incoming().uploadedAt == request.time));
-                    
-      allow update: if isAdmin();
-      
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(vehicleId);
+      allow update: if isSignedIn();
       allow delete: if isAdmin() || (isSignedIn() && resource.data.uploadedBy == request.auth.uid);
     }
 
     match /inspections/{inspectionId} {
-      allow get: if isSignedIn() && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
-      allow list: if isSignedIn() && (isAdmin() || resource.data.inspectedBy == request.auth.uid);
-      
-      allow create: if isVerified()
-                    && isValidId(inspectionId)
-                    && (isAdmin() || (isValidInspection(incoming()) && incoming().inspectedAt == request.time));
-                    
-      allow update: if isVerified()
-                    && isValidId(inspectionId)
-                    && isValidInspection(incoming())
-                    && (isAdmin() || incoming().inspectedBy == existing().inspectedBy)
-                    && incoming().inspectedAt == request.time;
-                    
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(inspectionId);
+      allow update: if isSignedIn() && isValidId(inspectionId);
       allow delete: if isAdmin() || (isSignedIn() && resource.data.inspectedBy == request.auth.uid);
     }
   }
