@@ -1,24 +1,24 @@
 export const createImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.setAttribute('crossOrigin', 'anonymous');
-    image.src = url;
-  });
+    const image = new Image()
+    image.addEventListener('load', () => resolve(image))
+    image.addEventListener('error', (error) => reject(error))
+    image.setAttribute('crossOrigin', 'anonymous') 
+    image.src = url
+  })
 
 export const getRadianAngle = (degreeValue: number) => {
-  return (degreeValue * Math.PI) / 180;
-};
+  return (degreeValue * Math.PI) / 180
+}
 
 export function rotateSize(width: number, height: number, rotation: number) {
-  const rotRad = getRadianAngle(rotation);
+  const rotRad = getRadianAngle(rotation)
   return {
     width:
       Math.abs(Math.cos(rotRad) * width) + Math.abs(Math.sin(rotRad) * height),
     height:
       Math.abs(Math.sin(rotRad) * width) + Math.abs(Math.cos(rotRad) * height),
-  };
+  }
 }
 
 export async function getCroppedImg(
@@ -26,43 +26,43 @@ export async function getCroppedImg(
   pixelCrop: { x: number; y: number; width: number; height: number },
   rotation = 0
 ): Promise<string> {
-  const image = await createImage(imageSrc);
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+  const image = await createImage(imageSrc)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
 
   if (!ctx) {
-    return '';
+    return ''
   }
 
-  const rotRad = getRadianAngle(rotation);
+  const rotRad = getRadianAngle(rotation)
   const { width: bBoxWidth, height: bBoxHeight } = rotateSize(
     image.width,
     image.height,
     rotation
-  );
+  )
 
-  canvas.width = bBoxWidth;
-  canvas.height = bBoxHeight;
+  canvas.width = bBoxWidth
+  canvas.height = bBoxHeight
 
-  ctx.translate(bBoxWidth / 2, bBoxHeight / 2);
-  ctx.rotate(rotRad);
-  ctx.translate(-image.width / 2, -image.height / 2);
+  ctx.translate(bBoxWidth / 2, bBoxHeight / 2)
+  ctx.rotate(rotRad)
+  ctx.translate(-image.width / 2, -image.height / 2)
 
-  ctx.drawImage(image, 0, 0);
+  ctx.drawImage(image, 0, 0)
 
   const data = ctx.getImageData(
     pixelCrop.x,
     pixelCrop.y,
     pixelCrop.width,
     pixelCrop.height
-  );
+  )
 
-  canvas.width = pixelCrop.width;
-  canvas.height = pixelCrop.height;
+  canvas.width = pixelCrop.width
+  canvas.height = pixelCrop.height
 
-  ctx.putImageData(data, 0, 0);
+  ctx.putImageData(data, 0, 0)
 
-  // Compress and resize cropped image to guarantee Firestore payload is always safe and ultra-fast (<80KB)
+  // Compress and resize cropped image to guarantee Firestore payload is always < 100KB
   const MAX_WIDTH = 800;
   const MAX_HEIGHT = 800;
   let targetWidth = pixelCrop.width;
@@ -84,8 +84,8 @@ export async function getCroppedImg(
   const resizeCtx = resizeCanvas.getContext('2d');
   if (resizeCtx) {
     resizeCtx.drawImage(canvas, 0, 0, pixelCrop.width, pixelCrop.height, 0, 0, targetWidth, targetHeight);
-    return resizeCanvas.toDataURL('image/jpeg', 0.68);
+    return resizeCanvas.toDataURL('image/jpeg', 0.65);
   }
 
-  return canvas.toDataURL('image/jpeg', 0.68);
+  return canvas.toDataURL('image/jpeg', 0.65);
 }

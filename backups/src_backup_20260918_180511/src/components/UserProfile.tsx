@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
-import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, FlaskConical, ShieldCheck } from 'lucide-react';
+import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { updateProfile, updatePassword, User as FirebaseUser, EmailAuthProvider, reauthenticateWithCredential, reauthenticateWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 
 interface UserProfileProps {
   isDark: boolean;
   user: FirebaseUser | null;
-  onOpenTestRunner?: () => void;
 }
 
-export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTestRunner }) => {
+export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user }) => {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -19,9 +18,6 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
   const [loading, setLoading] = useState(false);
   const [requiresRecentLogin, setRequiresRecentLogin] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-
-  const normalizedUserEmail = user?.email?.trim().toLowerCase() || '';
-  const isAdmin = normalizedUserEmail === 'cbmpr.leilao@gmail.com';
 
   const isPasswordProvider = user?.providerData.some((p) => p.providerId === 'password');
 
@@ -289,53 +285,6 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
                </div>
             </form>
          </div>
-
-         {/* Painel Exclusivo de Administração & QA Suite - Apenas para CBMPR.LEILAO@GMAIL.COM */}
-         {isAdmin && (
-           <div className={`mt-8 p-8 rounded-3xl border shadow-sm transition-all ${
-             isDark 
-               ? 'bg-purple-950/20 border-purple-900/50' 
-               : 'bg-gradient-to-br from-purple-50/70 to-indigo-50/50 border-purple-200'
-           }`}>
-             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-               <div className="flex items-start space-x-4">
-                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0 ${
-                   isDark ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50' : 'bg-purple-600 text-white'
-                 }`}>
-                   <ShieldCheck size={26} />
-                 </div>
-                 <div>
-                   <div className="flex items-center gap-2">
-                     <h2 className={`text-xl font-black tracking-tight ${isDark ? 'text-purple-200' : 'text-purple-950'}`}>
-                       Painel Restrito do Administrador
-                     </h2>
-                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                       isDark ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-purple-100 text-purple-700 border border-purple-200'
-                     }`}>
-                       Exclusivo
-                     </span>
-                   </div>
-                   <p className={`text-sm mt-1 font-medium ${isDark ? 'text-purple-300/80' : 'text-purple-800/80'}`}>
-                     Acesso restrito autorizado para <strong className="underline">{user?.email}</strong>. Execute diagnósticos, simulações laboratoriais e a suíte completa de testes das novas funções periciais.
-                   </p>
-                 </div>
-               </div>
-
-               <button
-                 type="button"
-                 onClick={onOpenTestRunner}
-                 className={`w-full md:w-auto px-6 py-3.5 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center space-x-2.5 transition-all shadow-md active:scale-95 ${
-                   isDark
-                     ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/40'
-                     : 'bg-purple-700 hover:bg-purple-800 text-white shadow-purple-200'
-                 }`}
-               >
-                 <FlaskConical size={18} />
-                 <span>Abrir Central de Testes (QA Suite)</span>
-               </button>
-             </div>
-           </div>
-         )}
       </div>
   );
 };
