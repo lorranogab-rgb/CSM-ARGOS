@@ -45,9 +45,16 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
       setRequiresRecentLogin(false);
       setMessage({ type: 'success', text: 'Reautenticado com sucesso. Você já pode salvar as alterações.' });
     } catch (error: unknown) {
-      console.error(error);
+      console.warn('Reauthentication notice:', error);
       const errMessage = error instanceof Error ? error.message : String(error);
-      setMessage({ type: 'error', text: 'Erro ao reautenticar: ' + (errMessage || 'Verifique sua senha atual.') });
+      const errCode = typeof error === 'object' && error !== null ? (error as {code?: string}).code : undefined;
+      if (errCode === 'auth/invalid-credential' || 
+          errMessage.includes('auth/invalid-credential') || 
+          errMessage.includes('invalid-credential')) {
+        setMessage({ type: 'error', text: 'Senha atual incorreta. Por favor, verifique e tente novamente.' });
+      } else {
+        setMessage({ type: 'error', text: 'Erro ao reautenticar: ' + (errMessage || 'Verifique sua senha atual.') });
+      }
     } finally {
       setLoading(false);
     }
@@ -90,7 +97,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
         setMessage({ type: 'success', text: 'Nenhuma alteração foi feita.' });
       }
     } catch (error: unknown) {
-      console.error(error);
+      console.warn('Profile update notice:', error);
       
       const errMessage = error instanceof Error ? error.message : String(error);
       const errCode = typeof error === 'object' && error !== null ? (error as {code?: string}).code : undefined;
@@ -99,7 +106,11 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
 
       if (isRecentLoginError) {
          setRequiresRecentLogin(true);
-         setMessage({ type: 'error', text: 'Operação sensível requer reautenticação.' });
+         setMessage({ type: 'error', text: 'Operação sensível requer reautenticação recente.' });
+      } else if (errCode === 'auth/invalid-credential' || 
+                 errMessage.includes('auth/invalid-credential') || 
+                 errMessage.includes('invalid-credential')) {
+         setMessage({ type: 'error', text: 'Credenciais inválidas. Verifique sua senha atual.' });
       } else {
          setMessage({ type: 'error', text: errMessage || 'Erro ao atualizar perfil. Talvez você precise refazer o login.' });
       }

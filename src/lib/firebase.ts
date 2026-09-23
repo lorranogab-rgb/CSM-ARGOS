@@ -3,6 +3,7 @@ import {
   GoogleAuthProvider, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   initializeAuth,
   getAuth,
   browserPopupRedirectResolver,
@@ -40,7 +41,7 @@ export const auth = authInstance;
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export { signInWithEmailAndPassword, createUserWithEmailAndPassword };
+export { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail };
 
 export enum OperationType {
   CREATE = 'create',

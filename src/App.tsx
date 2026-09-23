@@ -42,7 +42,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { Toaster, toast } from 'sonner';
-import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
+import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
 import { MOCK_VEHICLES, MOCK_INSPECTIONS } from './data/mockData';
@@ -1630,6 +1630,8 @@ const App = () => {
   }, [isMenuOpen]);
   const [authPassword, setAuthPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
@@ -2142,9 +2144,9 @@ const App = () => {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (e: any) {
-      console.error(e);
-      const errorCode = e.code || "";
-      const errorMessage = e.message || "";
+      console.warn('Aviso de login Google:', e?.code || e?.message);
+      const errorCode = e?.code || "";
+      const errorMessage = e?.message || "";
       const errorStr = String(e);
       
       if (errorCode === 'auth/network-request-failed') {
@@ -2152,9 +2154,9 @@ const App = () => {
       } else if (errorCode === 'auth/invalid-credential' || 
                  errorMessage.includes('invalid-credential') ||
                  errorStr.includes('invalid-credential')) {
-        setAuthError("Credenciais inválidas ou sessão expirada.");
-      } else if (errorCode === 'auth/popup-closed-by-user') {
-        // Just ignore if the user closed the popup
+        setAuthError("Credenciais expiradas ou inválidas. Tente novamente pelo botão do Google.");
+      } else if (errorCode === 'auth/popup-closed-by-user' || errorCode === 'auth/cancelled-popup-request') {
+        // Usuário cancelou ou fechou a janela do Google
       } else {
         setAuthError("Erro na autenticação com Google: " + errorMessage);
       }
@@ -2164,16 +2166,26 @@ const App = () => {
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    const cleanEmail = authEmail.trim();
+    if (!cleanEmail) {
+      setAuthError("Informe seu e-mail.");
+      return;
+    }
+    if (!authPassword) {
+      setAuthError("Informe sua senha.");
+      return;
+    }
+
     try {
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        await createUserWithEmailAndPassword(auth, cleanEmail, authPassword);
       } else {
-        await signInWithEmailAndPassword(auth, authEmail, authPassword);
+        await signInWithEmailAndPassword(auth, cleanEmail, authPassword);
       }
     } catch (e: any) {
-      console.error(e);
-      const errorCode = e.code || "";
-      const errorMessage = e.message || "";
+      console.warn('Aviso de autenticação por e-mail:', e?.code || e?.message);
+      const errorCode = e?.code || "";
+      const errorMessage = e?.message || "";
       const errorStr = String(e);
       
       if (errorCode === 'auth/user-not-found' || 
@@ -2182,19 +2194,48 @@ const App = () => {
           errorMessage.includes('auth/invalid-credential') ||
           errorMessage.includes('invalid-credential') ||
           errorStr.includes('invalid-credential')) {
-        setAuthError("E-mail ou senha incorretos.");
+        if (cleanEmail.toLowerCase().includes('@gmail.com')) {
+          setAuthError("Credenciais inválidas. Como seu e-mail é do Google, recomendamos utilizar o botão 'Entrar com Google' abaixo ou cadastre-se se for o primeiro acesso.");
+        } else {
+          setAuthError("E-mail ou senha incorretos. Se ainda não possui cadastro com senha, clique em 'Cadastre-se' abaixo.");
+        }
       } else if (errorCode === 'auth/email-already-in-use') {
-        setAuthError("Este e-mail já está em uso.");
+        setAuthError("Este e-mail já está em uso. Faça login ou redefina sua senha.");
       } else if (errorCode === 'auth/weak-password') {
         setAuthError("A senha deve ter pelo menos 6 caracteres.");
       } else if (errorCode === 'auth/invalid-email') {
-        setAuthError("E-mail inválido.");
+        setAuthError("Formato de e-mail inválido.");
       } else if (errorCode === 'auth/operation-not-allowed') {
-        setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console.");
+        setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console. Utilize 'Entrar com Google'.");
       } else if (errorCode === 'auth/network-request-failed') {
         setAuthError("Erro de conexão com o Firebase Auth. Verifique sua internet ou bloqueadores de anúncios.");
       } else {
-        setAuthError("Erro na autenticação: " + errorMessage);
+        setAuthError("Erro na autenticação: " + (errorMessage || "Verifique os dados digitados."));
+      }
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = authEmail.trim();
+    if (!cleanEmail) {
+      setAuthError("Digite o e-mail da sua conta para enviarmos as instruções de redefinição de senha.");
+      return;
+    }
+    setAuthError(null);
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      toast.success("E-mail de recuperação enviado com sucesso!");
+      setResetEmailSent(true);
+    } catch (e: any) {
+      console.warn('Aviso de redefinição de senha:', e?.code || e?.message);
+      const errorCode = e?.code || "";
+      if (errorCode === 'auth/user-not-found' || errorCode === 'auth/invalid-credential') {
+        setAuthError("Não encontramos uma conta cadastrada com este e-mail.");
+      } else if (errorCode === 'auth/invalid-email') {
+        setAuthError("E-mail inválido.");
+      } else {
+        setAuthError("Erro ao enviar recuperação: " + (e?.message || "Tente novamente mais tarde."));
       }
     }
   };
@@ -3794,72 +3835,171 @@ const App = () => {
           </div>
           
           <h1 className="text-3xl font-black tracking-tighter mb-2 italic">CSM:ARGOS</h1>
-          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
+          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-6 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
           
-          <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
-            <div>
-              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
-              <input 
-                type="email" 
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                autoComplete="email"
-                required
-                className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
-                placeholder="seu@email.com"
-              />
-            </div>
-            <div>
-              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Senha</label>
-              <input 
-                type="password" 
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-                className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
-                placeholder="••••••••"
-              />
-            </div>
-
-            {authError && (
-              <div className="p-3 rounded-lg bg-red-100 text-red-600 text-xs font-semibold flex items-center space-x-2">
-                <AlertCircle size={14} />
-                <span>{authError}</span>
+          {/* Opção Recomendada: Entrar com Google */}
+          {!isForgotPassword && (
+            <div className="mb-6">
+              <button 
+                type="button"
+                onClick={loginWithGoogle}
+                className="w-full py-3.5 px-4 rounded-2xl font-bold transition-all border flex items-center justify-center space-x-3 duration-200 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                <span className="text-sm font-semibold text-slate-800">Entrar com o Google</span>
+              </button>
+              
+              <div className="flex items-center space-x-2 my-5">
+                <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
+                <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Ou com E-mail e Senha</span>
+                <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
               </div>
-            )}
+            </div>
+          )}
 
-            <button 
-              type="submit"
-              className={`w-full py-4 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px]`}
-            >
-              {isSignUp ? 'Criar Conta' : 'Entrar'}
-            </button>
-          </form>
+          {isForgotPassword ? (
+            <form onSubmit={handlePasswordReset} className="space-y-4 mb-6 text-left">
+              <div>
+                <h3 className="text-base font-bold mb-1">Recuperar Senha</h3>
+                <p className={`text-xs mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Informe o seu e-mail cadastrado e enviaremos um link para criar uma nova senha.
+                </p>
+                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
+                <input 
+                  type="email" 
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
+                  placeholder="seu@email.com"
+                />
+              </div>
 
-          <div className="flex items-center space-x-2 my-6">
-            <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Ou</span>
-            <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
-          </div>
+              {resetEmailSent && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs font-semibold flex items-center space-x-2">
+                  <CheckCircle size={16} className="shrink-0" />
+                  <span>E-mail de recuperação enviado! Verifique sua caixa de entrada e spam.</span>
+                </div>
+              )}
 
-          <button 
-            type="button"
-            onClick={loginWithGoogle}
-            className={`w-full py-3.5 rounded-xl font-bold transition-all border flex items-center justify-center space-x-3 duration-300 ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-white' : 'bg-white hover:bg-gray-50 border-gray-200 text-gray-700'}`}
-          >
-            <LogIn size={18} />
-            <span>Entrar com Google</span>
-          </button>
+              {authError && (
+                <div className="p-3 rounded-xl bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-semibold flex items-start space-x-2">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p>{authError}</p>
+                  </div>
+                </div>
+              )}
+
+              <button 
+                type="submit"
+                className={`w-full py-3.5 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px] cursor-pointer`}
+              >
+                Enviar Link de Recuperação
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsForgotPassword(false);
+                  setResetEmailSent(false);
+                  setAuthError(null);
+                }}
+                className={`w-full py-2 text-xs font-bold text-center ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-black'} cursor-pointer`}
+              >
+                Voltar para o Login
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
+              <div>
+                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
+                <input 
+                  type="email" 
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
+                  placeholder="seu@email.com"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Senha</label>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsForgotPassword(true);
+                        setAuthError(null);
+                        setResetEmailSent(false);
+                      }}
+                      className={`text-[11px] font-semibold hover:underline ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}
+                    >
+                      Esqueceu a senha?
+                    </button>
+                  )}
+                </div>
+                <input 
+                  type="password" 
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {authError && (
+                <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300 text-xs font-medium space-y-2">
+                  <div className="flex items-start space-x-2">
+                    <AlertCircle size={16} className="shrink-0 text-red-500 mt-0.5" />
+                    <p className="flex-1">{authError}</p>
+                  </div>
+                  {authError.includes('Google') && (
+                    <button
+                      type="button"
+                      onClick={loginWithGoogle}
+                      className="w-full mt-2 py-2 px-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-[11px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <LogIn size={14} />
+                      <span>Fazer Login com Google Agora</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <button 
+                type="submit"
+                className={`w-full py-3.5 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px] cursor-pointer`}
+              >
+                {isSignUp ? 'Criar Conta com E-mail' : 'Entrar'}
+              </button>
+            </form>
+          )}
           
-          <div className="mt-8">
-            <button 
-              onClick={() => setIsSignUp(!isSignUp)}
-              className={`text-sm font-bold ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-[#003B95] hover:text-blue-800'}`}
-            >
-              {isSignUp ? 'Já tem uma conta? Entre aqui' : 'Não tem conta? Cadastre-se'}
-            </button>
-          </div>
+          {!isForgotPassword && (
+            <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setAuthError(null);
+                }}
+                className={`text-xs font-bold ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-[#003B95] hover:text-blue-800'} cursor-pointer`}
+              >
+                {isSignUp ? 'Já tem uma conta? Entre aqui' : 'Não tem conta? Cadastre-se com e-mail'}
+              </button>
+            </div>
+          )}
         </div>
         
         <div className={`mt-12 flex flex-col items-center justify-center gap-1 opacity-50`}>
@@ -4297,15 +4437,6 @@ const App = () => {
                 <span className="hidden md:inline">Instalar</span>
               </button>
             )}
-
-            <button 
-              onClick={() => setShowUserManualModal(true)} 
-              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
-              title="Manual do Usuário"
-              aria-label="Manual do Usuário"
-            >
-              <BookOpen size={16} className="text-blue-500 sm:w-[18px] sm:h-[18px]" />
-            </button>
 
             <button 
               onClick={toggleTheme} 
