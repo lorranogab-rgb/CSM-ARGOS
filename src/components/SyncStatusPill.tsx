@@ -111,7 +111,7 @@ export const SyncStatusPill: React.FC<SyncStatusPillProps> = ({
       {/* Discrete Dropdown Panel */}
       {isOpen && (
         <div 
-          className={`absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl border p-4 shadow-2xl z-[100] animate-in fade-in zoom-in-95 duration-150 ${
+          className={`absolute right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-2rem)] rounded-2xl border p-4 shadow-2xl z-[100] animate-in fade-in zoom-in-95 duration-150 ${
             isDark 
               ? 'bg-slate-900 border-slate-800 text-white shadow-slate-950/80' 
               : 'bg-white border-gray-200 text-gray-900 shadow-gray-200/80'

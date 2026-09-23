@@ -406,6 +406,16 @@ export const TestRunnerModal: React.FC<TestRunnerModalProps> = ({
                   >
                     Sync Offline (4)
                   </button>
+                  <button
+                    onClick={() => setModuleFilter('AUTO_SAVE_DRAFT')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      moduleFilter === 'AUTO_SAVE_DRAFT'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : isDark ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    Auto-Save & Rascunho (7)
+                  </button>
                 </div>
 
                 {/* Primary Action Buttons */}

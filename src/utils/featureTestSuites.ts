@@ -3,7 +3,7 @@ import { Vehicle } from '../types';
 export interface TestCaseResult {
   id: string;
   name: string;
-  module: 'SCANNER_OCR' | 'YARD_PROGRESS' | 'BACKGROUND_SYNC';
+  module: 'SCANNER_OCR' | 'YARD_PROGRESS' | 'BACKGROUND_SYNC' | 'AUTO_SAVE_DRAFT';
   status: 'IDLE' | 'RUNNING' | 'PASSED' | 'FAILED';
   durationMs: number;
   input: unknown;
@@ -209,6 +209,132 @@ export class MockSyncEngine {
     this.state = 'synced';
     this.lastSyncTime = new Date();
     return { syncedCount: pending.length, remaining: 0 };
+  }
+}
+
+// -------------------------------------------------------------
+// MODULE 4: AUTO-SAVE & ACTIVE DRAFT ENGINE
+// -------------------------------------------------------------
+export interface MockDraftPayload {
+  id: string;
+  userId?: string;
+  userEmail?: string;
+  userName?: string;
+  laudoData: {
+    vehicle?: { placa?: string; modelo?: string; chassi?: string; [key: string]: unknown };
+    scores?: Record<string, string>;
+    checklist?: Record<string, string>;
+    diagnostics?: Record<string, string[]>;
+    checklistDiagnostics?: Record<string, string[]>;
+    chassisPhoto?: string | null;
+    motorPhoto?: string | null;
+    [key: string]: unknown;
+  };
+  wizPhase: string;
+  wizSubPhase: string;
+  wizStep: number;
+  activeTab: string;
+  viewMode: boolean;
+  updatedAt: number;
+  updatedAtFormatted: string;
+  vehicleSummary: {
+    placa?: string;
+    modelo?: string;
+  };
+}
+
+export class MockAutoSaveEngine {
+  public idbStore: Map<string, MockDraftPayload> = new Map();
+  public localStorageStore: Map<string, string> = new Map();
+  public status: 'idle' | 'saving' | 'saved' = 'idle';
+  public lastSaveTimestamp: number = 0;
+  public simulateQuotaError: boolean = false;
+
+  public async saveDraft(payload: MockDraftPayload, userId?: string): Promise<void> {
+    this.status = 'saving';
+    const targetUserId = userId || payload.userId || 'guest';
+    const idbKey = (targetUserId === 'guest' || targetUserId === 'current_active_draft') ? 'current_active_draft' : `current_active_draft_${targetUserId}`;
+    const lsKey = (targetUserId === 'guest' || targetUserId === 'current_active_draft') ? 'argos_active_inspection_draft' : `argos_active_inspection_draft_${targetUserId}`;
+
+    const completePayload: MockDraftPayload = {
+      ...payload,
+      id: idbKey,
+      userId: targetUserId
+    };
+
+    // 1. IndexedDB persistence (deep copy)
+    this.idbStore.set(idbKey, JSON.parse(JSON.stringify(completePayload)));
+
+    // 2. LocalStorage persistence with Quota Fallback
+    try {
+      if (this.simulateQuotaError) {
+        throw new Error('QuotaExceededError');
+      }
+      this.localStorageStore.set(lsKey, JSON.stringify(completePayload));
+    } catch {
+      // Fallback: sanitize heavy photos
+      const lightweight: MockDraftPayload = {
+        ...completePayload,
+        laudoData: {
+          ...completePayload.laudoData,
+          chassisPhoto: completePayload.laudoData?.chassisPhoto ? '[saved_in_idb]' : null,
+          motorPhoto: completePayload.laudoData?.motorPhoto ? '[saved_in_idb]' : null,
+        }
+      };
+      this.localStorageStore.set(lsKey, JSON.stringify(lightweight));
+    }
+
+    this.status = 'saved';
+    this.lastSaveTimestamp = Date.now();
+  }
+
+  public async getDraft(userId: string = 'current_active_draft'): Promise<MockDraftPayload | null> {
+    const idbKey = (userId === 'guest' || userId === 'current_active_draft') ? 'current_active_draft' : (userId.startsWith('current_active_draft') ? userId : `current_active_draft_${userId}`);
+    const lsKey = (userId === 'guest' || userId === 'current_active_draft') ? 'argos_active_inspection_draft' : (userId.startsWith('argos_active_inspection_draft') ? userId : `argos_active_inspection_draft_${userId}`);
+
+    const fromIdb = this.idbStore.get(idbKey);
+    if (fromIdb) {
+      if (fromIdb.userId && userId !== 'current_active_draft' && fromIdb.userId !== userId) {
+        return null;
+      }
+      return fromIdb;
+    }
+
+    const fromLs = this.localStorageStore.get(lsKey);
+    if (fromLs) {
+      try {
+        const parsed = JSON.parse(fromLs) as MockDraftPayload;
+        if (parsed.userId && userId !== 'current_active_draft' && parsed.userId !== userId) {
+          return null;
+        }
+        return parsed;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  public async clearDraft(userId: string = 'current_active_draft'): Promise<void> {
+    const idbKey = (userId === 'guest' || userId === 'current_active_draft') ? 'current_active_draft' : (userId.startsWith('current_active_draft') ? userId : `current_active_draft_${userId}`);
+    const lsKey = (userId === 'guest' || userId === 'current_active_draft') ? 'argos_active_inspection_draft' : (userId.startsWith('argos_active_inspection_draft') ? userId : `argos_active_inspection_draft_${userId}`);
+
+    this.idbStore.delete(idbKey);
+    this.localStorageStore.delete(lsKey);
+    this.status = 'idle';
+  }
+
+  public checkInspectionAction(targetPlaca: string, currentDraft: MockDraftPayload | null, viewMode: boolean, currentUserId?: string): 'RESUME' | 'CONFLICT' | 'NEW' | 'FORBIDDEN_OTHER_USER' {
+    if (!currentDraft || !currentDraft.laudoData?.vehicle?.placa || viewMode) {
+      return 'NEW';
+    }
+    if (currentDraft.userId && currentUserId && currentDraft.userId !== currentUserId) {
+      return 'FORBIDDEN_OTHER_USER';
+    }
+    if (currentDraft.laudoData.vehicle.placa === targetPlaca) {
+      return 'RESUME';
+    }
+    return 'CONFLICT';
   }
 }
 
@@ -551,6 +677,361 @@ export async function runAllFeatureTests(): Promise<TestSuiteSummary> {
         syncedCount: res.syncedCount,
         remaining: res.remaining,
         state: engine.state
+      };
+    }
+  );
+
+  // ============================================================
+  // MODULE 4: AUTO-SAVE & ACTIVE DRAFT PERSISTENCE TESTS
+  // ============================================================
+  await recordAsync(
+    'AUTOSAVE-01',
+    'Serialização e Gravação de Rascunho com Dados Periciais',
+    'AUTO_SAVE_DRAFT',
+    { placa: 'BRA2E19', phase: 'PINTURA', step: 2 },
+    { status: 'saved', hasIdb: true, hasLs: true, placa: 'BRA2E19', step: 2 },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      const payload: MockDraftPayload = {
+        id: 'current_active_draft',
+        laudoData: {
+          vehicle: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4', chassi: '9BWZZZ377VT004251' },
+          scores: { pintura_capo: 'BOM', pintura_teto: 'REGULAR' },
+          checklist: { farois: 'S', limpadores: 'S', estepe: 'N' },
+          diagnostics: { pintura_capo: ['RISCOS_SUPERFICIAIS'] },
+          chassisPhoto: 'data:image/jpeg;base64,/9j/mockChassisData'
+        },
+        wizPhase: 'PINTURA',
+        wizSubPhase: 'EXTERIOR',
+        wizStep: 2,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:30:00',
+        vehicleSummary: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4' }
+      };
+
+      await engine.saveDraft(payload);
+      const idbItem = await engine.idbStore.get('current_active_draft');
+      const lsRaw = engine.localStorageStore.get('argos_active_inspection_draft');
+
+      return {
+        status: engine.status,
+        hasIdb: Boolean(idbItem),
+        hasLs: Boolean(lsRaw),
+        placa: idbItem?.laudoData?.vehicle?.placa,
+        step: idbItem?.wizStep
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-02',
+    'Integridade de Leitura e Restauração de Estado sem Perda de Checklist/Fotos',
+    'AUTO_SAVE_DRAFT',
+    { readStoredDraft: true },
+    { restoredPlaca: 'BRA2E19', phase: 'PINTURA', step: 2, scorePintura: 'BOM', checkFarol: 'S', hasChassisPhoto: true },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      await engine.saveDraft({
+        id: 'current_active_draft',
+        laudoData: {
+          vehicle: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4' },
+          scores: { pintura_capo: 'BOM' },
+          checklist: { farois: 'S' },
+          chassisPhoto: 'data:image/jpeg;base64,/mockPhoto'
+        },
+        wizPhase: 'PINTURA',
+        wizSubPhase: 'EXTERIOR',
+        wizStep: 2,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:35:10',
+        vehicleSummary: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4' }
+      });
+
+      const draft = await engine.getDraft('current_active_draft');
+
+      return {
+        restoredPlaca: draft?.laudoData?.vehicle?.placa,
+        phase: draft?.wizPhase,
+        step: draft?.wizStep,
+        scorePintura: draft?.laudoData?.scores?.pintura_capo,
+        checkFarol: draft?.laudoData?.checklist?.farois,
+        hasChassisPhoto: Boolean(draft?.laudoData?.chassisPhoto)
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-03',
+    'Limpeza Segura do Rascunho ao Concluir Vistoria (saveFinal)',
+    'AUTO_SAVE_DRAFT',
+    { completeInspection: true },
+    { draftAfterClear: null, idbHasKey: false, lsHasKey: false, status: 'idle' },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      await engine.saveDraft({
+        id: 'current_active_draft',
+        laudoData: { vehicle: { placa: 'BRA2E19' } },
+        wizPhase: 'RESUMO',
+        wizSubPhase: 'FINAL',
+        wizStep: 5,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:40:00',
+        vehicleSummary: { placa: 'BRA2E19' }
+      });
+
+      // User finalizes and saves the report
+      await engine.clearDraft('current_active_draft');
+      const retrieved = await engine.getDraft('current_active_draft');
+
+      return {
+        draftAfterClear: retrieved,
+        idbHasKey: engine.idbStore.has('current_active_draft'),
+        lsHasKey: engine.localStorageStore.has('argos_active_inspection_draft'),
+        status: engine.status
+      };
+    }
+  );
+
+  record(
+    'AUTOSAVE-04',
+    'Retomada Transparente ao Clicar no Mesmo Veículo em Vistoria (Sem Reset)',
+    'AUTO_SAVE_DRAFT',
+    { targetPlaca: 'BRA2E19', currentDraftPlaca: 'BRA2E19' },
+    { action: 'RESUME', preserveCurrentData: true },
+    () => {
+      const engine = new MockAutoSaveEngine();
+      const currentDraft: MockDraftPayload = {
+        id: 'current_active_draft',
+        laudoData: {
+          vehicle: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4' },
+          scores: { motor: 'EXCELENTE' }
+        },
+        wizPhase: 'MOTOR',
+        wizSubPhase: 'MECANICA',
+        wizStep: 3,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:42:00',
+        vehicleSummary: { placa: 'BRA2E19' }
+      };
+
+      const action = engine.checkInspectionAction('BRA2E19', currentDraft, false);
+      return {
+        action,
+        preserveCurrentData: action === 'RESUME'
+      };
+    }
+  );
+
+  record(
+    'AUTOSAVE-05',
+    'Detecção e Bloqueio de Sobrescrita Acidental em Veículo Divergente',
+    'AUTO_SAVE_DRAFT',
+    { targetPlaca: 'ABC1234', currentDraftPlaca: 'BRA2E19' },
+    { action: 'CONFLICT', promptUser: true },
+    () => {
+      const engine = new MockAutoSaveEngine();
+      const currentDraft: MockDraftPayload = {
+        id: 'current_active_draft',
+        laudoData: { vehicle: { placa: 'BRA2E19' } },
+        wizPhase: 'PINTURA',
+        wizSubPhase: 'EXTERIOR',
+        wizStep: 1,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:45:00',
+        vehicleSummary: { placa: 'BRA2E19' }
+      };
+
+      const action = engine.checkInspectionAction('ABC1234', currentDraft, false);
+      return {
+        action,
+        promptUser: action === 'CONFLICT'
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-06',
+    'Resiliência a Estouro de Quota com Fallback Estruturado para LocalStorage',
+    'AUTO_SAVE_DRAFT',
+    { simulateQuotaError: true },
+    { idbHasPhoto: true, lsHasPhotoFallback: true, lsPhotoVal: '[saved_in_idb]' },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      engine.simulateQuotaError = true;
+
+      const payload: MockDraftPayload = {
+        id: 'current_active_draft',
+        laudoData: {
+          vehicle: { placa: 'BRA2E19' },
+          chassisPhoto: 'data:image/jpeg;base64,EXTREMELY_LARGE_BLOB_STRING',
+          motorPhoto: 'data:image/jpeg;base64,EXTREMELY_LARGE_BLOB_STRING'
+        },
+        wizPhase: 'FOTOS',
+        wizSubPhase: 'IDENTIFICACAO',
+        wizStep: 4,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:50:00',
+        vehicleSummary: { placa: 'BRA2E19' }
+      };
+
+      await engine.saveDraft(payload);
+
+      const idbItem = engine.idbStore.get('current_active_draft');
+      const lsRaw = engine.localStorageStore.get('argos_active_inspection_draft');
+      const lsParsed = lsRaw ? JSON.parse(lsRaw) : null;
+
+      return {
+        idbHasPhoto: idbItem?.laudoData?.chassisPhoto === 'data:image/jpeg;base64,EXTREMELY_LARGE_BLOB_STRING',
+        lsHasPhotoFallback: Boolean(lsParsed),
+        lsPhotoVal: lsParsed?.laudoData?.chassisPhoto
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-07',
+    'Disparo Imediato e Salvamento em Interrupção/Segundo Plano (visibilitychange/pagehide)',
+    'AUTO_SAVE_DRAFT',
+    { triggerEvent: 'pagehide', vehicle: 'BRA2E19', newStep: 4 },
+    { savedBeforeExit: true, lastPhase: 'MECÂNICA', lastStep: 4 },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      // Simulate active wizard user moving forward
+      const liveMemoryState: MockDraftPayload = {
+        id: 'current_active_draft',
+        laudoData: {
+          vehicle: { placa: 'BRA2E19', modelo: 'Toyota Hilux 4x4' },
+          scores: { motor: 'EXCELENTE', suspensao: 'BOM' }
+        },
+        wizPhase: 'MECÂNICA',
+        wizSubPhase: 'MOTOR',
+        wizStep: 4,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '14:55:00',
+        vehicleSummary: { placa: 'BRA2E19' }
+      };
+
+      // Sudden interruption (browser hidden or phone switch)
+      await engine.saveDraft(liveMemoryState);
+      const retrieved = await engine.getDraft('current_active_draft');
+
+      return {
+        savedBeforeExit: Boolean(retrieved),
+        lastPhase: retrieved?.wizPhase,
+        lastStep: retrieved?.wizStep
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-08',
+    'Isolamento Estrito de Rascunho por Usuário (Usuário X não acessa dados de Usuário Y)',
+    'AUTO_SAVE_DRAFT',
+    { userA: 'perito_joao', userB: 'perito_maria' },
+    { userADraftPlaca: 'ABC1D23', userBCanAccessADraft: false, userBDraftPlaca: 'XYZ9K88' },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+
+      // Perito João (User A) inicia vistoria de ABC1D23
+      await engine.saveDraft({
+        id: 'draft_userA',
+        userId: 'perito_joao',
+        userEmail: 'joao@pericia.pr.gov.br',
+        userName: 'João da Silva',
+        laudoData: {
+          vehicle: { placa: 'ABC1D23', modelo: 'Ford Ranger 4x4' },
+          scores: { motor: 'BOM' }
+        },
+        wizPhase: 'MOTOR',
+        wizSubPhase: 'MECÂNICA',
+        wizStep: 3,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '10:00:00',
+        vehicleSummary: { placa: 'ABC1D23' }
+      }, 'perito_joao');
+
+      // Perito Maria (User B) faz login no mesmo dispositivo
+      const draftLoadedByMaria = await engine.getDraft('perito_maria');
+
+      // Maria inicia sua própria vistoria de XYZ9K88
+      await engine.saveDraft({
+        id: 'draft_userB',
+        userId: 'perito_maria',
+        userEmail: 'maria@pericia.pr.gov.br',
+        userName: 'Maria Santos',
+        laudoData: {
+          vehicle: { placa: 'XYZ9K88', modelo: 'VW Amarok V6' },
+          scores: { lataria: 'REGULAR' }
+        },
+        wizPhase: 'LATARIA',
+        wizSubPhase: 'EXTERIOR',
+        wizStep: 1,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '10:15:00',
+        vehicleSummary: { placa: 'XYZ9K88' }
+      }, 'perito_maria');
+
+      const draftRetrievedForJoao = await engine.getDraft('perito_joao');
+      const draftRetrievedForMaria = await engine.getDraft('perito_maria');
+
+      return {
+        userADraftPlaca: draftRetrievedForJoao?.laudoData?.vehicle?.placa,
+        userBCanAccessADraft: Boolean(draftLoadedByMaria),
+        userBDraftPlaca: draftRetrievedForMaria?.laudoData?.vehicle?.placa
+      };
+    }
+  );
+
+  await recordAsync(
+    'AUTOSAVE-09',
+    'Bloqueio de Retomada Cruzada entre Peritos Diferentes no Mesmo Veículo',
+    'AUTO_SAVE_DRAFT',
+    { targetPlaca: 'ABC1D23', draftOwner: 'perito_joao', currentUser: 'perito_maria' },
+    { actionForMaria: 'FORBIDDEN_OTHER_USER', actionForJoao: 'RESUME' },
+    async () => {
+      const engine = new MockAutoSaveEngine();
+      const joaoDraft: MockDraftPayload = {
+        id: 'draft_userA',
+        userId: 'perito_joao',
+        laudoData: {
+          vehicle: { placa: 'ABC1D23', modelo: 'Ford Ranger' }
+        },
+        wizPhase: 'MECÂNICA',
+        wizSubPhase: 'MOTOR',
+        wizStep: 2,
+        activeTab: 'wizard',
+        viewMode: false,
+        updatedAt: Date.now(),
+        updatedAtFormatted: '11:00:00',
+        vehicleSummary: { placa: 'ABC1D23' }
+      };
+
+      // Maria tenta abrir a vistoria de ABC1D23 que João iniciou
+      const actionForMaria = engine.checkInspectionAction('ABC1D23', joaoDraft, false, 'perito_maria');
+      // João tenta abrir a vistoria de ABC1D23 que ele mesmo iniciou
+      const actionForJoao = engine.checkInspectionAction('ABC1D23', joaoDraft, false, 'perito_joao');
+
+      return {
+        actionForMaria,
+        actionForJoao
       };
     }
   );

@@ -8,17 +8,19 @@ async function main() {
 
   const summary = await runAllFeatureTests();
 
-  const moduleNames = {
+  const moduleNames: Record<string, string> = {
     SCANNER_OCR: 'Módulo 1: Leitor Câmera / OCR & QR Code',
     YARD_PROGRESS: 'Módulo 2: Indicador Visual de Progresso por Pátio',
-    BACKGROUND_SYNC: 'Módulo 3: Sincronização em Segundo Plano (Offline First)'
+    BACKGROUND_SYNC: 'Módulo 3: Sincronização em Segundo Plano (Offline First)',
+    AUTO_SAVE_DRAFT: 'Módulo 4: Salvamento Automático & Persistência de Vistorias'
   };
 
-  const currentModule = '';
+  let currentModule = '';
   for (const result of summary.results) {
-    const modTitle = moduleNames[result.module];
+    const modTitle = moduleNames[result.module] || result.module;
     if (modTitle !== currentModule) {
       console.log(`\n--- [${modTitle}] ---`);
+      currentModule = modTitle;
     }
     const icon = result.status === 'PASSED' ? '✓ [PASS]' : '✗ [FAIL]';
     console.log(`${icon} (${result.id}) ${result.name} - ${result.durationMs}ms`);

@@ -10,7 +10,17 @@ import { saveAs } from 'file-saver';
 import Cropper from 'react-easy-crop';
 import { getCroppedImg } from './lib/cropUtils';
 import { compressImageFile } from './lib/imageCompressor';
-import { saveLocalInspection, getLocalInspections, deleteLocalInspection } from './lib/indexedDb';
+import { 
+  saveLocalInspection, 
+  getLocalInspections, 
+  deleteLocalInspection,
+  saveActiveInspectionDraft,
+  getActiveInspectionDraft,
+  clearActiveInspectionDraft,
+  getAllActiveDrafts,
+  getDraftStorageKey,
+  ActiveInspectionDraft
+} from './lib/indexedDb';
 import { LoadingArgos } from './components/LoadingArgos';
 import { SpreadsheetEditor } from './components/SpreadsheetEditor';
 import { UserProfile } from './components/UserProfile';
@@ -230,13 +240,13 @@ const SCORE_CATEGORIES = [
 // --- COMPONENTES DO MÍMICO BLINDADO ---
 
 const MimicoHeader = ({ subtitulo, regional }) => (
-  <div className="bg-white grid grid-cols-12 items-center mb-2 uppercase text-black font-bold" >
+  <div className="bg-white grid grid-cols-12 items-center mb-2 uppercase text-black font-bold" style={{ fontFamily: "Arial, 'Helvetica Neue', Helvetica, sans-serif" }}>
     <div className="col-span-3 flex justify-end pr-6"><img src={LOGO_PARANA} alt="Brasão" className="h-24 w-auto object-contain" /></div>
-    <div className="col-span-6 text-center text-[13px] leading-tight flex flex-col items-center">
-      <p className="font-bold text-black uppercase">Estado do Paraná</p>
-      <p className="font-bold text-black uppercase">Corpo de Bombeiros Militar</p>
-      <p className="font-bold text-black uppercase">{regional || "CENTRO DE SUPRIMENTO E MANUTENÇÃO"}</p>
-      {subtitulo && <p className="mt-2 text-[13px] border border-black py-0.5 bg-gray-200 px-4 font-bold text-black uppercase">{subtitulo}</p>}
+    <div className="col-span-6 text-center text-[13px] flex flex-col items-center justify-center leading-normal" style={{ letterSpacing: "normal", wordSpacing: "normal" }}>
+      <p className="font-bold text-black uppercase whitespace-nowrap leading-snug tracking-normal" style={{ letterSpacing: "0px", lineHeight: "1.3" }}>Estado do Paraná</p>
+      <p className="font-bold text-black uppercase whitespace-nowrap leading-snug tracking-normal" style={{ letterSpacing: "0px", lineHeight: "1.3" }}>Corpo de Bombeiros Militar</p>
+      <p className="font-bold text-black uppercase whitespace-nowrap leading-snug tracking-normal" style={{ letterSpacing: "0px", lineHeight: "1.3" }}>{regional || "CENTRO DE SUPRIMENTO E MANUTENÇÃO"}</p>
+      {subtitulo && <p className="mt-2 text-[13px] border border-black py-0.5 bg-gray-200 px-4 font-bold text-black uppercase tracking-normal" style={{ letterSpacing: "0px", lineHeight: "1.3" }}>{subtitulo}</p>}
     </div>
     <div className="col-span-3 flex justify-start pl-6"><img src={LOGO_CBMPR} alt="CBMPR" className="h-24 w-auto object-contain" /></div>
   </div>
@@ -1260,6 +1270,43 @@ const App = () => {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(new Date());
 
+  // Mecanismo de Salvamento Automático de Vistoria em Andamento (Segregado por Usuário)
+  const [activeDraftInfo, setActiveDraftInfo] = useState<{
+    placa?: string;
+    modelo?: string;
+    phase?: string;
+    updatedAtFormatted?: string;
+    userId?: string;
+    userEmail?: string;
+    userName?: string;
+  } | null>(null);
+  const [otherUsersDrafts, setOtherUsersDrafts] = useState<ActiveInspectionDraft[]>([]);
+  const [foreignDraftAlertModal, setForeignDraftAlertModal] = useState<{
+    vehicle: any;
+    otherDraft: ActiveInspectionDraft;
+  } | null>(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string | null>(null);
+  const [showDiscardDraftModal, setShowDiscardDraftModal] = useState(false);
+  const [pendingVehicleToInspect, setPendingVehicleToInspect] = useState<any>(null);
+
+  // Refs para capturar o estado mais recente em eventos do navegador móvel (visibilitychange, pagehide)
+  const laudoDataRef = useRef(laudoData);
+  const wizPhaseRef = useRef(wizPhase);
+  const wizSubPhaseRef = useRef(wizSubPhase);
+  const wizStepRef = useRef(wizStep);
+  const activeTabRef = useRef(activeTab);
+  const viewModeRef = useRef(viewMode);
+
+  useEffect(() => {
+    laudoDataRef.current = laudoData;
+    wizPhaseRef.current = wizPhase;
+    wizSubPhaseRef.current = wizSubPhase;
+    wizStepRef.current = wizStep;
+    activeTabRef.current = activeTab;
+    viewModeRef.current = viewMode;
+  }, [laudoData, wizPhase, wizSubPhase, wizStep, activeTab, viewMode]);
+
   const filteredInspectedResults = useMemo(() => {
     let results = inspectedResults;
     
@@ -1459,6 +1506,10 @@ const App = () => {
   const [rotation, setRotation] = useState(0);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
   const [user, setUser] = useState<User | null>(null);
+  const userRef = useRef<User | null>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
   const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -1863,6 +1914,178 @@ const App = () => {
     }, 50);
   }, [activeTab, page, wizPhase, wizStep]);
 
+  // Função para salvar imediatamente o rascunho da vistoria em andamento com restrição por usuário
+  const saveCurrentDraft = useCallback(() => {
+    const currentLaudo = laudoDataRef.current;
+    const currentViewMode = viewModeRef.current;
+    if (!currentLaudo || currentViewMode) return;
+
+    const currentUser = userRef.current;
+    const currentUid = currentUser?.uid || auth.currentUser?.uid || 'guest';
+    const currentUserEmail = currentUser?.email || auth.currentUser?.email || '';
+    const currentUserName = currentUser?.displayName || auth.currentUser?.displayName || currentUserEmail || 'Avaliador';
+
+    const currentPhase = wizPhaseRef.current;
+    const currentSubPhase = wizSubPhaseRef.current;
+    const currentStep = wizStepRef.current;
+    const currentTab = activeTabRef.current;
+
+    setAutoSaveStatus('saving');
+    const now = Date.now();
+    const timeStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const draftPayload: ActiveInspectionDraft = {
+      id: getDraftStorageKey(currentUid),
+      userId: currentUid,
+      userEmail: currentUserEmail,
+      userName: currentUserName,
+      laudoData: currentLaudo,
+      wizPhase: currentPhase,
+      wizSubPhase: currentSubPhase,
+      wizStep: currentStep,
+      activeTab: currentTab === 'mimico' ? 'mimico' : 'wizard',
+      viewMode: false,
+      updatedAt: now,
+      updatedAtFormatted: timeStr,
+      vehicleSummary: {
+        placa: currentLaudo.vehicle?.placa,
+        modelo: currentLaudo.vehicle?.modelo,
+        chassi: currentLaudo.vehicle?.chassi,
+        municipio: currentLaudo.vehicle?.municipio,
+        ano: currentLaudo.vehicle?.ano,
+        patrimonio: currentLaudo.vehicle?.patrimonio
+      }
+    };
+
+    saveActiveInspectionDraft(draftPayload, currentUid).then(() => {
+      setAutoSaveStatus('saved');
+      setLastAutoSaveTime(timeStr);
+      setActiveDraftInfo({
+        placa: currentLaudo.vehicle?.placa || 'VEÍCULO',
+        modelo: currentLaudo.vehicle?.modelo || '',
+        phase: currentPhase,
+        updatedAtFormatted: timeStr,
+        userId: currentUid,
+        userEmail: currentUserEmail,
+        userName: currentUserName
+      });
+      // Atualiza listagem de outros peritos em background
+      getAllActiveDrafts().then((all) => {
+        setOtherUsersDrafts(all.filter(d => Boolean(d.userId && d.userId !== currentUid)));
+      }).catch(() => {});
+    }).catch((err) => {
+      console.warn('Erro ao persistir rascunho de vistoria:', err);
+      setAutoSaveStatus('idle');
+    });
+  }, []);
+
+  // Carregamento do rascunho de vistoria restrito ao usuário logado
+  const loadUserDraft = useCallback(async (targetUid?: string | null) => {
+    if (!targetUid) {
+      setLaudoData(null);
+      setActiveDraftInfo(null);
+      setLastAutoSaveTime(null);
+      setAutoSaveStatus('idle');
+      return;
+    }
+
+    try {
+      const draft = await getActiveInspectionDraft(targetUid);
+      if (draft && draft.laudoData && !draft.viewMode && (draft.userId === targetUid || !draft.userId)) {
+        setLaudoData(draft.laudoData);
+        setWizPhase(draft.wizPhase || 'VEÍCULO');
+        setWizSubPhase(draft.wizSubPhase || 'TIPO');
+        setWizStep(draft.wizStep || 0);
+        const laudoVehicle = draft.laudoData?.vehicle as { placa?: string; modelo?: string } | undefined;
+        const p = draft.vehicleSummary?.placa || laudoVehicle?.placa || 'VEÍCULO';
+        const m = draft.vehicleSummary?.modelo || laudoVehicle?.modelo || '';
+        setActiveDraftInfo({
+          placa: p,
+          modelo: m,
+          phase: draft.wizPhase || 'VEÍCULO',
+          updatedAtFormatted: draft.updatedAtFormatted,
+          userId: targetUid,
+          userEmail: draft.userEmail,
+          userName: draft.userName
+        });
+        setLastAutoSaveTime(draft.updatedAtFormatted || null);
+        setAutoSaveStatus('saved');
+
+        // Se a sessão anterior foi interrompida no wizard, restaura imediatamente
+        if (draft.activeTab === 'wizard') {
+          setActiveTab('wizard');
+          toast.success(`Sua vistoria em andamento foi restaurada: ${p} (${m})`, { duration: 5000 });
+        }
+      } else {
+        // Usuário não possui rascunho: assegura que não carregue resíduos de outros usuários
+        setLaudoData(null);
+        setActiveDraftInfo(null);
+        setLastAutoSaveTime(null);
+        setAutoSaveStatus('idle');
+      }
+    } catch (err) {
+      console.warn('Erro ao restaurar rascunho salvo de vistoria do usuário:', err);
+    }
+  }, []);
+
+  const refreshOtherDrafts = useCallback(async (currentUid?: string | null) => {
+    try {
+      const all = await getAllActiveDrafts();
+      if (!currentUid) {
+        setOtherUsersDrafts([]);
+        return;
+      }
+      const others = all.filter(d => Boolean(d.userId && d.userId !== currentUid));
+      setOtherUsersDrafts(others);
+    } catch (err) {
+      console.warn('Erro ao consultar outros rascunhos no dispositivo:', err);
+    }
+  }, []);
+
+  // 2. Debounce de salvamento automático a cada alteração nos dados da vistoria ou passos
+  useEffect(() => {
+    if (!laudoData || viewMode) return;
+
+    const timer = setTimeout(() => {
+      setAutoSaveStatus('saving');
+      saveCurrentDraft();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [laudoData, wizPhase, wizSubPhase, wizStep, viewMode, saveCurrentDraft]);
+
+  // 3. Captura imediata quando o usuário minimiza o app, abre outro app no celular ou fecha a tela
+  useEffect(() => {
+    const handleAppBackground = () => {
+      if (laudoDataRef.current && !viewModeRef.current) {
+        saveCurrentDraft();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleAppBackground();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleAppBackground);
+    window.addEventListener('beforeunload', handleAppBackground);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handleAppBackground);
+      window.removeEventListener('beforeunload', handleAppBackground);
+    };
+  }, [saveCurrentDraft]);
+
+  // 4. Salvamento imediato quando o usuário navega do wizard para qualquer outra tela
+  useEffect(() => {
+    if (activeTab !== 'wizard' && activeTab !== 'mimico' && laudoDataRef.current && !viewModeRef.current) {
+      saveCurrentDraft();
+    }
+  }, [activeTab, saveCurrentDraft]);
+
   useEffect(() => {
     const fallbackTimer = setTimeout(() => {
       setAuthReady(true);
@@ -1874,7 +2097,11 @@ const App = () => {
       setAuthReady(true);
       if (u) {
         fetchInitialData(u.uid);
+        loadUserDraft(u.uid);
+        refreshOtherDrafts(u.uid);
       } else {
+        loadUserDraft(null);
+        refreshOtherDrafts(null);
         setFrota(INITIAL_FROTA);
         try {
           const deletedRaw = localStorage.getItem('argos_deleted_laudo_ids');
@@ -1893,7 +2120,9 @@ const App = () => {
         } catch {
           setInspectedResults([]);
         }
-        setActiveTab('inicio');
+        if (activeTabRef.current !== 'wizard' && activeTabRef.current !== 'mimico') {
+          setActiveTab('inicio');
+        }
       }
     }, (err) => {
       console.warn("Auth state error:", err);
@@ -2630,17 +2859,19 @@ const App = () => {
       try {
         let imgData: string = '';
         try {
+          // Attempt using html2canvas
           const canvas = await html2canvas(form, {
             scale: 2,
             useCORS: true,
             allowTaint: true,
             backgroundColor: "#ffffff",
             logging: false,
-            windowWidth: 794,
+            windowWidth: form.scrollWidth || 794,
           });
           imgData = canvas.toDataURL("image/jpeg", 0.95);
         } catch (canvasErr) {
           console.warn("html2canvas fallback to toJpeg:", canvasErr);
+          // In toJpeg, skipFonts: true prevents "font is undefined" errors with webfonts
           imgData = await toJpeg(form, {
             quality: 0.95,
             pixelRatio: 2,
@@ -3045,7 +3276,7 @@ const App = () => {
   reader.readAsBinaryString(file);
 };
 
-  const startInspection = (v: any) => {
+  const proceedWithNewInspection = (v: any) => {
     const existing = inspectedResults.find(r => r.placa === v.placa);
     if (existing && existing.fullData) {
       setLaudoData(existing.fullData);
@@ -3067,7 +3298,7 @@ const App = () => {
         },
         vehicle: { 
           ...v, 
-          fipe: v.fipe.toString(), 
+          fipe: (v.fipe || 0).toString(), 
           endereco: v.endereco || { rua: "", bairro: "", num: "", cidade: v.municipio || "" } 
         },
         agency: { nome: "CORPO DE BOMBEIROS MILITAR DO PARANÁ", fone: "", presidente: "", membro1: "", membro2: "", portaria: "", dioe: "", processo: "", ano_proc: "2026", protocolo: "", regional: "" },
@@ -3077,6 +3308,39 @@ const App = () => {
     }
     setWizPhase('VEÍCULO'); setWizStep(0); setWizSubPhase('TIPO');
     setViewMode(false); setActiveTab('wizard');
+  };
+
+  const startInspection = (v: any) => {
+    const currentUid = userRef.current?.uid || auth.currentUser?.uid || 'guest';
+
+    // 1. Se este veículo já é o rascunho em andamento do próprio usuário logado, retoma diretamente sem resetar dados!
+    if (laudoData && laudoData.vehicle?.placa === v.placa && !viewMode) {
+      if (!activeDraftInfo?.userId || activeDraftInfo.userId === currentUid) {
+        setViewMode(false);
+        setActiveTab('wizard');
+        toast.info(`Retomando sua vistoria de ${v.placa}`);
+        return;
+      }
+    }
+
+    // 2. Restrição Pericial por Usuário: se o veículo tem rascunho iniciado por OUTRO usuário no dispositivo
+    const otherDraft = otherUsersDrafts.find(d => d.vehicleSummary?.placa === v.placa);
+    if (otherDraft && otherDraft.userId && otherDraft.userId !== currentUid) {
+      setForeignDraftAlertModal({
+        vehicle: v,
+        otherDraft
+      });
+      return;
+    }
+
+    // 3. Se há uma vistoria de outro veículo em andamento com dados preenchidos do próprio usuário, solicita confirmação
+    if (laudoData && !viewMode && laudoData.vehicle?.placa && laudoData.vehicle?.placa !== v.placa) {
+      saveCurrentDraft();
+      setPendingVehicleToInspect(v);
+      return;
+    }
+
+    proceedWithNewInspection(v);
   };
 
   const handleScore = (id, opt) => setLaudoData({...laudoData, scores: {...laudoData.scores, [id]: opt}});
@@ -3340,10 +3604,6 @@ const App = () => {
     if (!res) return [];
     const gaps = [];
     if (res.sinistrado === 'Sim' && !res.processoSindicancia) gaps.push({ label: 'Sinistro sem Sindicância', text: 'Item 2.1 - Veículo envolvido em sinistro só poderá ser apresentado ao DETO/SEAP após conclusão do processo sindicante, inquérito técnico, ou similar.' });
-    if (res.debitosLicenciamento === 'Pendente') gaps.push({ label: 'Débitos Pendentes', text: 'Item 2.2 - Deverão estar livres de multas (municipal, estadual e federal) e quitado o licenciamento.' });
-    if (res.bloqueioJudicial === 'Sim') gaps.push({ label: 'Bloqueio Administ./Judicial', text: 'Item 2.2 - Os bloqueios são impedidmentos para transferência de propriedade do bem, nesse sentido o gestor local deverá adotar providências para regularização.' });
-    if (res.chassiIlegivel === 'Sim') gaps.push({ label: 'Chassi Ilegível', text: 'Item 2.3 - O DETRAN não aprova a vistoria quando o chassi não está legível, portanto o órgão deverá tomar as providências para efetuar a remarcação.' });
-    if (res.motorDivergente === 'Sim') gaps.push({ label: 'Motor Divergente', text: 'Item 2.5 - Numeração do motor divergente: o órgão deverá adotar providências junto ao DETRAN/PR para corrigir a irregularidade.' });
     if (res.plotagemRemovida === 'Não') gaps.push({ label: 'Plotagem Oficial Presente', text: 'Item 2.4 - Caberá ao órgão ou entidade proprietária a retirada de qualquer item relativo à identificação visual que possa induzir o cidadão ao engano.' });
     if (res.giroflexRemovido === 'Não') gaps.push({ label: 'Giroflex/Luzes Presentes', text: 'Item 2.4 - Retirada de dispositivos de iluminação de emergência (giroflex) a fim de evitar transtornos de caráter administrativo e até mesmo judicial.' });
     return gaps;
@@ -3437,6 +3697,13 @@ const App = () => {
 
       // Smoothly redirect to dashboard right away
       setActiveTab('dashboard');
+
+      // Limpa o rascunho de vistoria em andamento deste usuário pois o laudo foi finalizado com sucesso
+      const currentInspectionUid = userRef.current?.uid || auth.currentUser?.uid;
+      await clearActiveInspectionDraft(currentInspectionUid).catch(() => {});
+      setActiveDraftInfo(null);
+      setLastAutoSaveTime(null);
+      setAutoSaveStatus('idle');
 
       // 2. Asynchronous background sync to Firestore (non-blocking)
       (async () => {
@@ -3606,7 +3873,7 @@ const App = () => {
   }
 
   return (
-    <div className={`flex flex-col lg:flex-row h-screen font-sans antialiased overflow-hidden ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-gray-50 text-gray-900'}`}>
+    <div className={`flex flex-col lg:flex-row h-screen w-full max-w-full font-sans antialiased overflow-hidden ${isDark ? 'bg-slate-950 text-slate-50' : 'bg-gray-50 text-gray-900'}`}>
       <Toaster position="top-right" richColors />
       {loadingTask && <LoadingArgos type={loadingTask.type} message={loadingTask.message} isDark={isDark} progress={loadingTask.progress} />}
       <PrintPreviewModal showPreview={showPreview} laudoData={laudoData} isDark={isDark} setShowPreview={setShowPreview} previewPage={previewPage} setPreviewPage={setPreviewPage} setLaudoData={setLaudoData} />
@@ -3898,22 +4165,38 @@ const App = () => {
       )}
 
       {/* NAVEGAÇÃO RESPONSIVA (SIDEBAR NO DESKTOP / DRAWER NO MOBILE) */}
-      <aside className={`fixed lg:static inset-y-0 left-0 w-72 lg:w-64 h-full flex flex-col border-r transition-transform duration-300 z-[120] lg:translate-x-0 ${isMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-xl lg:shadow-none'}`}>
-        <div className="p-6 flex items-center justify-between lg:hidden border-b border-gray-100 dark:border-slate-800 mb-2">
+      <aside className={`fixed lg:static inset-y-0 left-0 w-72 max-w-[85vw] lg:w-64 h-full flex flex-col border-r transition-all duration-300 z-[120] ${isMenuOpen ? 'translate-x-0 opacity-100 visible pointer-events-auto' : '-translate-x-full opacity-0 invisible lg:opacity-100 lg:visible lg:translate-x-0 pointer-events-none lg:pointer-events-auto'} ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200 shadow-xl lg:shadow-none'}`}>
+        <div className="p-4 sm:p-6 flex items-center justify-between lg:hidden border-b border-gray-100 dark:border-slate-800 mb-2">
            <div className="flex items-center space-x-3">
               <div className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm ${isDark ? 'bg-slate-800 text-blue-400' : 'bg-white border border-blue-100 text-[#003B95]'}`}>
                  <Eye size={18} strokeWidth={2.5} />
               </div>
               <span className={`text-lg font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
            </div>
-           <button onClick={() => setIsMenuOpen(false)} className={`p-2 rounded-lg ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}>
+           <button onClick={() => setIsMenuOpen(false)} className={`p-2 rounded-lg ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`} aria-label="Fechar Menu">
               <X size={20} />
            </button>
         </div>
 
         <div className="hidden lg:block h-8"></div>
         
-        <nav className="flex-1 flex flex-col p-4 space-y-1.5">
+        <nav className="flex-1 flex flex-col p-4 space-y-1.5 overflow-y-auto overflow-x-hidden">
+          {activeDraftInfo && (
+            <button 
+              onClick={() => { setViewMode(false); setActiveTab('wizard'); setIsMenuOpen(false); }} 
+              className="flex items-center justify-between p-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-blue-950 font-black shadow-md transition-all active:scale-95 mb-2 border border-amber-500/30"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Car size={18} className="shrink-0 text-blue-950" />
+                <div className="text-left truncate">
+                  <div className="text-[9px] uppercase tracking-widest font-black opacity-80">Retomar Vistoria</div>
+                  <div className="text-xs font-black truncate">{activeDraftInfo.placa} <span className="opacity-75 font-normal">({activeDraftInfo.phase})</span></div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="shrink-0" />
+            </button>
+          )}
+
           <button 
             onClick={() => { setActiveTab('inicio'); setIsMenuOpen(false); }} 
             className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'inicio' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
@@ -3969,29 +4252,32 @@ const App = () => {
         </nav>
       </aside>
 
-      <main id="main-scroll-container" className="flex-1 overflow-y-auto relative">
+      <main id="main-scroll-container" className="flex-1 w-full min-w-0 max-w-full overflow-y-auto overflow-x-hidden relative">
         {/* TOP UTILITY BAR (STICKY) */}
-        <div className={`sticky top-0 z-[60] flex items-center justify-between px-4 py-4 md:px-8 md:py-6 lg:px-12 lg:py-6 backdrop-blur-xl transition-colors ${isDark ? 'bg-slate-950/80 border-b border-slate-800/50' : 'bg-gray-50/80 border-b border-gray-200/50'}`}>
-          <div className="flex items-center space-x-3">
+        <div className={`sticky top-0 z-[60] flex items-center justify-between px-3 py-3 sm:px-6 sm:py-4 lg:px-12 lg:py-6 backdrop-blur-xl transition-colors w-full max-w-full overflow-hidden ${isDark ? 'bg-slate-950/80 border-b border-slate-800/50' : 'bg-gray-50/80 border-b border-gray-200/50'}`}>
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 shrink">
             <button 
               onClick={() => setIsMenuOpen(true)}
-              className={`lg:hidden p-2 pr-4 rounded-xl transition-all duration-300 flex items-center space-x-2.5 active:scale-95 ${isDark ? 'bg-slate-800/80 text-blue-400 hover:bg-slate-800' : 'bg-white text-[#003B95] border border-gray-100 shadow-sm hover:border-blue-200'}`}
+              className={`lg:hidden p-2 sm:px-3 sm:py-2 rounded-xl transition-all duration-300 flex items-center space-x-1.5 sm:space-x-2 active:scale-95 shrink-0 ${isDark ? 'bg-slate-800/80 text-blue-400 hover:bg-slate-800' : 'bg-white text-[#003B95] border border-gray-100 shadow-sm hover:border-blue-200'}`}
+              title="Abrir Menu"
+              aria-label="Abrir Menu de Navegação"
             >
-              <LayoutGrid size={18} strokeWidth={2.5} className="animate-pulse" />
-              <span className="text-[10px] font-black tracking-widest uppercase">Menu</span>
+              <LayoutGrid size={18} strokeWidth={2.5} className="animate-pulse shrink-0" />
+              <span className="text-[10px] font-black tracking-widest uppercase hidden sm:inline">Menu</span>
             </button>
-            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('inicio')}>
-              <div className={`w-10 h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 relative ${isDark ? 'bg-slate-800 text-blue-400 border-slate-900 border-b-blue-500' : 'bg-white text-[#003B95] border-blue-900 border-b-blue-400 shadow-blue-900/10'}`}>
-                <Eye size={24} strokeWidth={2.5} />
+            <div className="flex items-center space-x-2 sm:space-x-3 cursor-pointer min-w-0" onClick={() => setActiveTab('inicio')}>
+              <div className={`w-9 h-9 sm:w-10 sm:h-10 lg:w-12 lg:h-12 flex items-center justify-center rounded-xl shadow-sm border-b-2 relative shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-900 border-b-blue-500' : 'bg-white text-[#003B95] border-blue-900 border-b-blue-400 shadow-blue-900/10'}`}>
+                <Eye size={18} className="sm:hidden" strokeWidth={2.5} />
+                <Eye size={24} className="hidden sm:block" strokeWidth={2.5} />
               </div>
-              <div className="flex flex-col">
-                <span className={`text-xl lg:text-2xl font-black leading-none tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
-                <span className={`text-[10px] lg:text-[11px] font-bold tracking-[0.1em] uppercase ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</span>
+              <div className="flex flex-col min-w-0">
+                <span className={`text-base sm:text-xl lg:text-2xl font-black leading-none tracking-tight truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>CSM:ARGOS</span>
+                <span className={`text-[9px] sm:text-[10px] lg:text-[11px] font-bold tracking-[0.08em] uppercase truncate hidden sm:block ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 lg:space-x-3">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 lg:space-x-3 shrink-0">
             {/* Sincronização em Segundo Plano com Notificação Discreta */}
             <SyncStatusPill
               syncState={syncState}
@@ -4001,59 +4287,99 @@ const App = () => {
               isDark={isDark}
             />
 
-            {/* Leitor Rápido de Câmera */}
-            <button
-              onClick={() => setShowCameraScanner(true)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-black uppercase tracking-wider transition-all duration-200 active:scale-95 cursor-pointer shadow-sm ${
-                isDark
-                  ? 'bg-blue-950/40 border-blue-500/30 text-blue-400 hover:bg-blue-900/50'
-                  : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
-              }`}
-              title="Leitor Automático de Placa, Chassi e QR Code via Câmera"
-            >
-              <Camera size={15} />
-              <span className="hidden sm:inline">Scanner</span>
-            </button>
-
             {deferredPrompt && (
               <button
                 onClick={handleInstallClick}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${isDark ? 'bg-amber-500 text-slate-900 hover:bg-amber-400' : 'bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-500/20'}`}
+                className={`flex items-center space-x-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0 ${isDark ? 'bg-amber-500 text-slate-900 hover:bg-amber-400' : 'bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-500/20'}`}
+                title="Instalar Aplicativo"
               >
-                <Smartphone size={14} />
-                <span className="hidden md:inline">Instalar App</span>
+                <Smartphone size={14} className="shrink-0" />
+                <span className="hidden md:inline">Instalar</span>
               </button>
             )}
 
             <button 
               onClick={() => setShowUserManualModal(true)} 
-              className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
+              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
               title="Manual do Usuário"
               aria-label="Manual do Usuário"
             >
-              <BookOpen size={18} className="text-blue-500" />
+              <BookOpen size={16} className="text-blue-500 sm:w-[18px] sm:h-[18px]" />
             </button>
 
             <button 
               onClick={toggleTheme} 
-              className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              title={isDark ? "Ativar Modo Claro" : "Ativar Modo Escuro"}
+              aria-label="Alternar Tema"
             >
-               {isDark ? <Sun size={18} /> : <Moon size={18} />}
+               {isDark ? <Sun size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Moon size={16} className="sm:w-[18px] sm:h-[18px]" />}
             </button>
 
           {activeTab === 'wizard' && laudoData && (
             <button 
               onClick={() => setShowPreview(true)} 
-              className={`w-10 h-10 flex items-center justify-center rounded-md cursor-pointer transition-colors border shadow-sm ${isDark ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
               title="Pré-visualizar Impressão"
+              aria-label="Pré-visualizar Impressão"
             >
-              <Eye size={18} />
+              <Eye size={16} className="sm:w-[18px] sm:h-[18px]" />
             </button>
           )}
           </div>
         </div>
 
-        <div className="p-4 md:p-8 lg:p-12">
+        <div className="p-3 sm:p-4 md:p-8 lg:p-12 w-full max-w-full overflow-x-hidden">
+        {/* BANNER DE VISTORIA EM ANDAMENTO (VISÍVEL EM TODAS AS TELAS EXCETO WIZARD E MÍMICO) */}
+        {activeDraftInfo && activeTab !== 'wizard' && activeTab !== 'mimico' && (
+          <div className="max-w-6xl mx-auto mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-900 text-white shadow-xl border border-blue-400/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-11 h-11 rounded-xl bg-white/10 backdrop-blur-md flex items-center justify-center shrink-0 border border-white/20">
+                <Car size={22} className="text-amber-300 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-400 text-blue-950 shadow-sm">
+                    Vistoria em Andamento
+                  </span>
+                  <span className="text-xs text-blue-200">
+                    Fase: <strong className="text-white">{activeDraftInfo.phase}</strong>
+                  </span>
+                  {activeDraftInfo.updatedAtFormatted && (
+                    <span className="text-[11px] text-blue-200/80 hidden sm:inline">
+                      · Salvo às {activeDraftInfo.updatedAtFormatted}
+                    </span>
+                  )}
+                </div>
+                <h4 className="text-base font-black truncate text-white mt-1">
+                  {activeDraftInfo.placa} <span className="font-normal opacity-85">· {activeDraftInfo.modelo}</span>
+                </h4>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+              <button
+                onClick={() => {
+                  setViewMode(false);
+                  setActiveTab('wizard');
+                }}
+                className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-blue-950 font-black text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center gap-2 cursor-pointer"
+              >
+                <span>Continuar Vistoria</span>
+                <ChevronRight size={16} />
+              </button>
+
+              <button
+                onClick={() => setShowDiscardDraftModal(true)}
+                className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-red-500/30 text-white hover:text-red-200 text-xs font-bold transition-all border border-white/15 cursor-pointer"
+                title="Descartar rascunho de vistoria em andamento"
+              >
+                Descartar
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'inicio' && (
            <div className="max-w-6xl mx-auto pt-2 pb-12">
              {/* Header Section */}
@@ -4691,6 +5017,28 @@ const App = () => {
                                 }`}>
                                   {v.placa}
                                 </span>
+                                {activeDraftInfo && activeDraftInfo.placa === v.placa && (
+                                  <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-950 bg-amber-400 px-2 py-0.5 rounded-full animate-pulse shadow-sm">
+                                    <Car size={10} />
+                                    <span>Sua Vistoria</span>
+                                  </span>
+                                )}
+                                {(() => {
+                                  const otherDraft = otherUsersDrafts.find(d => d.vehicleSummary?.placa === v.placa);
+                                  if (otherDraft && (!activeDraftInfo || activeDraftInfo.placa !== v.placa)) {
+                                    const initialOrName = otherDraft.userName?.split(' ')[0] || otherDraft.userEmail?.split('@')[0] || 'Outro';
+                                    return (
+                                      <span 
+                                        className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-purple-700 bg-purple-100 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800 px-2 py-0.5 rounded-full border border-purple-200 shadow-sm"
+                                        title={`Em vistoria por ${otherDraft.userEmail || otherDraft.userName || 'outro avaliador'}`}
+                                      >
+                                        <Users size={10} />
+                                        <span>Em Vistoria ({initialOrName})</span>
+                                      </span>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                                 {v.notes && (
                                   <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full animate-pulse" title={v.notes}>
                                     <FileText size={10} />
@@ -4725,15 +5073,31 @@ const App = () => {
                             >
                               <QrCode size={18} />
                             </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleYardVehicleClick(v);
-                              }}
-                              className={`flex-1 sm:flex-none px-4 py-3 sm:py-2 rounded-xl font-black uppercase tracking-widest text-[10px] sm:text-[9px] transition-all flex items-center justify-center gap-2 ${isVistoriado ? 'bg-emerald-600 text-white hover:bg-emerald-700' : (isDark ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-[#003B95] text-white hover:bg-blue-800')}`}
-                            >
-                              {isVistoriado ? 'Visualizar' : 'Vistoriar'}
-                            </button>
+                            {(() => {
+                              const isVehicleInDraft = activeDraftInfo && activeDraftInfo.placa === v.placa;
+                              return (
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isVehicleInDraft) {
+                                      setViewMode(false);
+                                      setActiveTab('wizard');
+                                    } else {
+                                      handleYardVehicleClick(v);
+                                    }
+                                  }}
+                                  className={`flex-1 sm:flex-none px-4 py-3 sm:py-2 rounded-xl font-black uppercase tracking-widest text-[10px] sm:text-[9px] transition-all flex items-center justify-center gap-2 ${
+                                    isVehicleInDraft
+                                      ? 'bg-amber-400 hover:bg-amber-300 text-blue-950 shadow-md animate-pulse'
+                                      : isVistoriado 
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700' 
+                                        : (isDark ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-[#003B95] text-white hover:bg-blue-800')
+                                  }`}
+                                >
+                                  {isVehicleInDraft ? 'Continuar' : isVistoriado ? 'Visualizar' : 'Vistoriar'}
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       );
@@ -4826,11 +5190,30 @@ const App = () => {
 
         {activeTab === 'wizard' && laudoData && (
           <div id="wizard-content" className="max-w-4xl mx-auto pb-20">
-              <div className="mb-4">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <button onClick={prevWizard} className={`flex items-center space-x-2 font-semibold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-slate-400 hover:text-white' : 'text-gray-500 hover:text-[#003B95]'}`}>
                   <Undo2 size={18} />
                   <span>Voltar</span>
                 </button>
+
+                {/* Indicador Visual de Salvamento Automático */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold transition-all ${
+                  autoSaveStatus === 'saving'
+                    ? (isDark ? 'bg-amber-950/40 border-amber-600/40 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-700')
+                    : (isDark ? 'bg-emerald-950/40 border-emerald-600/40 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700')
+                }`}>
+                  {autoSaveStatus === 'saving' ? (
+                    <>
+                      <RotateCw size={12} className="animate-spin text-amber-500" />
+                      <span>Salvando rascunho...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle size={13} className="text-emerald-500" />
+                      <span>Salvo automaticamente {lastAutoSaveTime ? `(${lastAutoSaveTime})` : 'no dispositivo'}</span>
+                    </>
+                  )}
+                </div>
               </div>
               {wizPhase !== 'VEÍCULO' && (
                 <div className={`mb-8 p-4 rounded-lg flex flex-col md:flex-row md:items-center justify-between border shadow-sm ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
@@ -4894,8 +5277,8 @@ const App = () => {
                         }`}>
                           {isCompleted ? <CheckCircle size={16} strokeWidth={2} /> : <span className="text-xs font-semibold">{idx + 1}</span>}
                         </div>
-                        <span className={`absolute -bottom-6 whitespace-nowrap text-xs font-semibold transition-all duration-300 ${
-                          isActive ? (isDark ? 'text-white' : 'text-[#003B95]') : (isDark ? 'text-slate-500' : 'text-gray-500')
+                        <span className={`absolute -bottom-6 whitespace-nowrap text-[10px] sm:text-xs font-semibold transition-all duration-300 ${
+                          isActive ? (isDark ? 'text-white' : 'text-[#003B95]') : (isDark ? 'text-slate-500 hidden sm:inline' : 'text-gray-500 hidden sm:inline')
                         }`}>
                           {phase.label}
                         </span>
@@ -5164,12 +5547,8 @@ const App = () => {
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           {[
                             { id: 'sinistrado', label: 'Veículo Sinistrado?', color: 'text-red-500', icon: <Zap size={14} /> },
-                            { id: 'debitosLicenciamento', label: 'Débitos / Licenciamento?', color: 'text-amber-500', icon: <Tag size={14} />, type: 'select', options: ['Livre', 'Pendente'] },
-                            { id: 'bloqueioJudicial', label: 'Bloqueio Administ./Judicial?', color: 'text-red-500', icon: <Shield size={14} /> },
-                            { id: 'chassiIlegivel', label: 'Chassi / ID Ilegível?', color: 'text-red-500', icon: <Search size={14} /> },
                             { id: 'plotagemRemovida', label: 'Plotagem de Órgão Removida?', color: 'text-blue-500', icon: <Eye size={14} /> },
                             { id: 'giroflexRemovido', label: 'Giroflex / Luzes Removidos?', color: 'text-blue-500', icon: <Sun size={14} /> },
-                            { id: 'motorDivergente', label: 'Numeração Motor Divergente?', color: 'text-red-500', icon: <Gauge size={14} /> },
                           ].map(res => (
                             <div key={res.id} className={`p-4 rounded-xl border ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100 shadow-sm'}`}>
                                <div className="flex items-center justify-between mb-3">
@@ -5179,27 +5558,15 @@ const App = () => {
                                   </div>
                                </div>
                                <div className="grid grid-cols-2 gap-2">
-                                  {res.type === 'select' ? (
-                                    res.options?.map(opt => (
-                                      <button 
-                                        key={opt}
-                                        onClick={() => setLaudoData({...laudoData, restrictions: {...laudoData.restrictions, [res.id]: opt}})}
-                                        className={`py-2 rounded-lg text-xs font-bold border transition-all ${laudoData.restrictions[res.id] === opt ? 'bg-[#003B95] border-[#003B95] text-white shadow-md' : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100')}`}
-                                      >
-                                        {opt}
-                                      </button>
-                                    ))
-                                  ) : (
-                                    ['Sim', 'Não'].map(opt => (
-                                      <button 
-                                        key={opt}
-                                        onClick={() => setLaudoData({...laudoData, restrictions: {...laudoData.restrictions, [res.id]: opt}})}
-                                        className={`py-2 rounded-lg text-xs font-bold border transition-all ${laudoData.restrictions[res.id] === opt ? (opt === 'Sim' && ['sinistrado', 'bloqueioJudicial', 'chassiIlegivel', 'motorDivergente'].includes(res.id) ? 'bg-red-600 border-red-600 text-white' : 'bg-[#003B95] border-[#003B95] text-white shadow-md') : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100')}`}
-                                      >
-                                        {opt}
-                                      </button>
-                                    ))
-                                  )}
+                                  {['Sim', 'Não'].map(opt => (
+                                    <button 
+                                      key={opt}
+                                      onClick={() => setLaudoData({...laudoData, restrictions: {...laudoData.restrictions, [res.id]: opt}})}
+                                      className={`py-2 rounded-lg text-xs font-bold border transition-all ${laudoData.restrictions[res.id] === opt ? (opt === 'Sim' && res.id === 'sinistrado' ? 'bg-red-600 border-red-600 text-white' : 'bg-[#003B95] border-[#003B95] text-white shadow-md') : (isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100')}`}
+                                    >
+                                      {opt}
+                                    </button>
+                                  ))}
                                </div>
                                {res.id === 'sinistrado' && laudoData.restrictions.sinistrado === 'Sim' && (
                                  <div className="mt-3">
@@ -6438,6 +6805,150 @@ const App = () => {
               setViewingVehicleDetails((prev: any) => prev && prev.id === id ? { ...prev, ...updates } : prev);
             }}
           />
+        )}
+
+        {/* Modal de Confirmação de Descarte de Rascunho */}
+        {showDiscardDraftModal && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className={`w-full max-w-md p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+              <div className="flex items-center space-x-3 mb-4">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-red-900/30 text-red-400' : 'bg-red-50 text-red-500'}`}>
+                  <AlertTriangle size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold">Descartar Vistoria em Andamento?</h3>
+                  <p className="text-xs opacity-60">Os dados preenchidos serão perdidos.</p>
+                </div>
+              </div>
+              <p className={`text-sm mb-6 ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+                Deseja realmente descartar o rascunho de vistoria do veículo <strong className="font-mono">{activeDraftInfo?.placa || laudoData?.vehicle?.placa}</strong>? Esta ação não pode ser desfeita.
+              </p>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => setShowDiscardDraftModal(false)}
+                  className={`px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer ${isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    const currentInspectionUid = userRef.current?.uid || auth.currentUser?.uid;
+                    await clearActiveInspectionDraft(currentInspectionUid).catch(() => {});
+                    setLaudoData(null);
+                    setActiveDraftInfo(null);
+                    setLastAutoSaveTime(null);
+                    setAutoSaveStatus('idle');
+                    setShowDiscardDraftModal(false);
+                    toast.info("Sua vistoria em andamento foi descartada.");
+                  }}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md shadow-red-500/20 active:scale-95 cursor-pointer"
+                >
+                  Sim, Descartar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Conflito ao Iniciar Outro Veículo com Vistoria em Andamento */}
+        {pendingVehicleToInspect && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className={`w-full max-w-md p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+              <div className="flex items-center space-x-3 mb-4">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-amber-900/30 text-amber-400' : 'bg-amber-50 text-amber-600'}`}>
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold">Vistoria em Andamento</h3>
+                  <p className="text-xs opacity-60">Já existe um veículo sendo vistoriado por você.</p>
+                </div>
+              </div>
+              <p className={`text-sm mb-6 ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+                Você já possui a vistoria do veículo <strong className="font-mono">{laudoData?.vehicle?.placa}</strong> em andamento. Deseja continuar sua vistoria anterior ou iniciar uma nova para o veículo <strong className="font-mono">{pendingVehicleToInspect?.placa}</strong>?
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setPendingVehicleToInspect(null);
+                    setViewMode(false);
+                    setActiveTab('wizard');
+                  }}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 text-center cursor-pointer"
+                >
+                  Continuar Vistoria de {laudoData?.vehicle?.placa}
+                </button>
+                <button
+                  onClick={() => {
+                    const nextV = pendingVehicleToInspect;
+                    setPendingVehicleToInspect(null);
+                    proceedWithNewInspection(nextV);
+                  }}
+                  className="w-full py-2.5 px-4 border border-red-500/40 text-red-500 hover:bg-red-500/10 font-black text-xs uppercase tracking-wider rounded-xl transition-all text-center cursor-pointer"
+                >
+                  Iniciar Nova Vistoria (Substituir {pendingVehicleToInspect?.placa})
+                </button>
+                <button
+                  onClick={() => setPendingVehicleToInspect(null)}
+                  className={`w-full py-2 px-4 rounded-xl text-xs font-bold uppercase tracking-wider text-center transition-colors cursor-pointer ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Restrição de Vistoria de Outro Avaliador (Integridade Pericial) */}
+        {foreignDraftAlertModal && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className={`w-full max-w-md p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+              <div className="flex items-center space-x-3 mb-4">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-purple-900/40 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
+                  <Shield size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold">Vistoria de Outro Perito</h3>
+                  <p className="text-xs opacity-60">Processo restrito por avaliador</p>
+                </div>
+              </div>
+              <p className={`text-sm mb-4 ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+                O veículo <strong className="font-mono">{foreignDraftAlertModal.vehicle?.placa}</strong> possui um processo de vistoria em andamento iniciado por:
+              </p>
+              <div className={`p-3 rounded-xl mb-4 text-xs space-y-1 ${isDark ? 'bg-slate-800/70 border border-slate-700 text-slate-200' : 'bg-gray-50 border border-gray-200 text-gray-800'}`}>
+                <div className="flex items-center gap-1.5 font-bold">
+                  <Users size={14} className="text-purple-500" />
+                  <span>{foreignDraftAlertModal.otherDraft.userName || foreignDraftAlertModal.otherDraft.userEmail || 'Outro Avaliador'}</span>
+                </div>
+                {foreignDraftAlertModal.otherDraft.userEmail && (
+                  <div className="text-[11px] opacity-75 pl-5">{foreignDraftAlertModal.otherDraft.userEmail}</div>
+                )}
+                {foreignDraftAlertModal.otherDraft.updatedAtFormatted && (
+                  <div className="text-[11px] opacity-75 pl-5">Última alteração às {foreignDraftAlertModal.otherDraft.updatedAtFormatted}</div>
+                )}
+              </div>
+              <p className={`text-xs mb-6 italic leading-relaxed ${isDark ? 'text-amber-400/90' : 'text-amber-800'}`}>
+                Por integridade e responsabilidade técnica pericial, você não pode continuar ou alterar a vistoria iniciada por outro avaliador. Cada perito retoma apenas seus próprios processos.
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    const v = foreignDraftAlertModal.vehicle;
+                    setForeignDraftAlertModal(null);
+                    proceedWithNewInspection(v);
+                  }}
+                  className="w-full py-2.5 px-4 bg-[#003B95] hover:bg-blue-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 text-center cursor-pointer"
+                >
+                  Iniciar Minha Própria Vistoria (Novo Processo)
+                </button>
+                <button
+                  onClick={() => setForeignDraftAlertModal(null)}
+                  className={`w-full py-2 px-4 rounded-xl text-xs font-bold uppercase tracking-wider text-center transition-colors cursor-pointer ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Voltar ao Pátio
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </main>
     </div>
