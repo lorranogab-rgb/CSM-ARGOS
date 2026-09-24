@@ -38,9 +38,15 @@ try {
   authInstance = getAuth(app);
 }
 export const auth = authInstance;
+
+// Provedor padrão para login na aplicação (sem escopos sensíveis, permitindo acesso universal)
 export const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Provedor exclusivo para o módulo de integração com Google Drive
+export const googleDriveProvider = new GoogleAuthProvider();
+googleDriveProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
+googleDriveProvider.setCustomParameters({ prompt: 'select_account' });
 
 let cachedDriveAccessToken: string | null = null;
 

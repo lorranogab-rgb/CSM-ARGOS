@@ -48,8 +48,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { Toaster, toast } from 'sonner';
-import { auth, db, handleFirestoreError, OperationType } from './lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, onAuthStateChanged, User } from 'firebase/auth';
+import { auth, db, googleProvider, handleFirestoreError, OperationType } from './lib/firebase';
+import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { MOCK_VEHICLES, MOCK_INSPECTIONS } from './data/mockData';
 import { UserManualModal } from './components/UserManualModal';
@@ -1951,7 +1951,7 @@ const App = () => {
             patrimonio: kept.patrimonio || veh.patrimonio || '',
             renavam: kept.renavam || veh.renavam || '',
             municipio: kept.municipio || veh.municipio || '',
-            fipe: (kept.fipe && kept.fipe > 0) ? kept.fipe : (veh.fipe || 0),
+            fipe: (kept.fipe && Number(kept.fipe) > 0) ? kept.fipe : (veh.fipe || 0),
           };
           if (veh.id && veh.id !== kept.id) {
             vehicleIdsToDelete.push(veh.id);
@@ -2240,30 +2240,9 @@ const App = () => {
       setAuthReady(true);
     }, 1500);
 
-    const localUserRaw = localStorage.getItem('csm_local_user');
-    if (localUserRaw) {
-      try {
-        const parsed = JSON.parse(localUserRaw);
-        setUser(parsed);
-      } catch {}
-    }
-
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       clearTimeout(fallbackTimer);
-      if (u) {
-        setUser(u);
-      } else {
-        const local = localStorage.getItem('csm_local_user');
-        if (local) {
-          try {
-            setUser(JSON.parse(local));
-          } catch {
-            setUser(null);
-          }
-        } else {
-          setUser(null);
-        }
-      }
+      setUser(u);
       setAuthReady(true);
       if (u) {
         fetchInitialData();
@@ -2321,101 +2300,46 @@ const App = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [registerName, setRegisterName] = useState('');
-  const [registerEmail, setRegisterEmail] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('');
-  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
-  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
-
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginEmail || !loginPassword) {
-      toast.error('Informe o e-mail e a senha');
-      return;
-    }
-    setIsSubmittingAuth(true);
+  const loginWithGoogle = async () => {
     setAuthError(null);
     try {
-      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
-      toast.success('Login efetuado com sucesso!');
-    } catch (err: any) {
-      console.error(err);
-      const errCode = err.code || '';
-      if (errCode === 'auth/invalid-credential' || errCode === 'auth/wrong-password' || errCode === 'auth/user-not-found') {
-        setAuthError('E-mail ou senha incorretos.');
-      } else if (errCode === 'auth/too-many-requests') {
-        setAuthError('Muitas tentativas sem sucesso. Aguarde alguns minutos ou redefina sua senha.');
-      } else if (errCode === 'auth/operation-not-allowed' || errCode.includes('operation-not-allowed')) {
-        setAuthError('O provedor "E-mail/Senha" não está ativado no Firebase. Ative em: Firebase Console > Authentication > Sign-in method > E-mail/Senha.');
+      await signInWithPopup(auth, googleProvider);
+    } catch (e: any) {
+      const errorCode = e?.code || "";
+      const errorMessage = e?.message || "";
+      const errorStr = String(e);
+      
+      // User closed the popup window or triggered a duplicate request - gracefully ignore without console.error
+      if (errorCode === 'auth/popup-closed-by-user' || 
+          errorCode === 'auth/cancelled-popup-request' ||
+          errorMessage.includes('auth/popup-closed-by-user') ||
+          errorMessage.includes('auth/cancelled-popup-request') ||
+          errorStr.includes('auth/popup-closed-by-user') ||
+          errorStr.includes('auth/cancelled-popup-request')) {
+        return;
+      }
+
+      console.warn("Google authentication notice:", e);
+
+      if (errorCode === 'auth/unauthorized-domain' ||
+          errorMessage.includes('unauthorized-domain') ||
+          errorStr.includes('unauthorized-domain')) {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setAuthError(
+          `Domínio não autorizado no Firebase Auth (${currentHost}). Adicione este domínio em: Firebase Console > Authentication > Settings > Authorized domains.`
+        );
+      } else if (errorCode === 'auth/network-request-failed') {
+        setAuthError("Erro de conexão. Verifique sua internet ou se há bloqueadores de anúncios ativos.");
+      } else if (errorCode === 'auth/invalid-credential' || 
+                 errorMessage.includes('invalid-credential') ||
+                 errorStr.includes('invalid-credential')) {
+        setAuthError("Credenciais inválidas ou sessão expirada. Por favor, tente novamente.");
+      } else if (errorCode === 'auth/popup-blocked') {
+        setAuthError("O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para fazer login.");
       } else {
-        setAuthError(err.message || 'Falha ao autenticar.');
+        setAuthError("Erro na autenticação com Google: " + errorMessage);
       }
-    } finally {
-      setIsSubmittingAuth(false);
     }
-  };
-
-  const handleEmailRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!registerEmail || !registerPassword || !registerConfirmPassword) {
-      toast.error('Preencha todos os campos obrigatórios');
-      return;
-    }
-    if (registerPassword !== registerConfirmPassword) {
-      setAuthError('As senhas não conferem. Digite a mesma senha em ambos os campos.');
-      return;
-    }
-    if (registerPassword.length < 6) {
-      setAuthError('A senha deve conter no mínimo 6 caracteres.');
-      return;
-    }
-
-    setIsSubmittingAuth(true);
-    setAuthError(null);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, registerEmail.trim(), registerPassword);
-      if (registerName.trim() && userCredential.user) {
-        await updateProfile(userCredential.user, {
-          displayName: registerName.trim()
-        });
-      }
-      toast.success('Conta criada com sucesso! Bem-vindo ao CSM:ARGOS.');
-    } catch (err: any) {
-      console.error(err);
-      const errCode = err.code || '';
-      if (errCode === 'auth/email-already-in-use') {
-        setAuthError('Este e-mail já está cadastrado. Tente fazer login ou use outro e-mail.');
-      } else if (errCode === 'auth/weak-password') {
-        setAuthError('A senha é muito fraca. Utilize uma senha com pelo menos 6 caracteres.');
-      } else if (errCode === 'auth/invalid-email') {
-        setAuthError('Formato de e-mail inválido. Verifique o endereço digitado.');
-      } else if (errCode === 'auth/operation-not-allowed' || errCode.includes('operation-not-allowed')) {
-        setAuthError('O método de cadastro por E-mail/Senha está desativado no Firebase. Ative-o em: Firebase Console > Authentication > Sign-in method > E-mail/Senha > Ativar.');
-      } else {
-        setAuthError(err.message || 'Erro ao criar conta.');
-      }
-    } finally {
-      setIsSubmittingAuth(false);
-    }
-  };
-
-  const handleDirectAccess = (emailToUse?: string, nameToUse?: string) => {
-    const finalEmail = (emailToUse || loginEmail || registerEmail || 'avaliador@cbm.pr.gov.br').trim();
-    const finalName = (nameToUse || registerName || 'Avaliador Oficial').trim();
-    const localUser = {
-      uid: 'local-' + Math.random().toString(36).substring(2, 9),
-      email: finalEmail,
-      displayName: finalName,
-      photoURL: null
-    };
-    try {
-      localStorage.setItem('csm_local_user', JSON.stringify(localUser));
-    } catch {}
-    setUser(localUser as any);
-    toast.success(`Acesso liberado como ${finalName}!`);
   };
 
   const handleAddVehiclesPlanilha = async (newVehicles: Vehicle[]) => {
@@ -4000,156 +3924,27 @@ const App = () => {
           <h1 className="text-3xl font-black tracking-tighter mb-2 italic">CSM:ARGOS</h1>
           <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
           
-          {/* Auth Mode Tabs */}
-          <div className="flex rounded-2xl p-1 bg-slate-800/20 border border-slate-700/40 mb-6">
-            <button
-              type="button"
-              onClick={() => { setAuthMode('login'); setAuthError(null); }}
-              className={`flex-1 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all ${
-                authMode === 'login'
-                  ? isDark ? 'bg-blue-600 text-white shadow-lg' : 'bg-[#003B95] text-white shadow-md'
-                  : isDark ? 'text-slate-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Entrar
-            </button>
-            <button
-              type="button"
-              onClick={() => { setAuthMode('register'); setAuthError(null); }}
-              className={`flex-1 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all ${
-                authMode === 'register'
-                  ? isDark ? 'bg-blue-600 text-white shadow-lg' : 'bg-[#003B95] text-white shadow-md'
-                  : isDark ? 'text-slate-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Criar Conta
-            </button>
-          </div>
-
+          {/* Primary Google Login */}
           <div className="space-y-4">
-            {authMode === 'login' ? (
-              <form onSubmit={handleEmailLogin} className="space-y-3.5 text-left">
-                <div>
-                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    E-mail do Avaliador
-                  </label>
-                  <input
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="seu.email@exemplo.com"
-                    required
-                    className={`w-full px-4 py-3 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                  />
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    Senha
-                  </label>
-                  <input
-                    type="password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    className={`w-full px-4 py-3 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSubmittingAuth}
-                  className={`w-full py-4 px-6 rounded-2xl font-black text-sm uppercase tracking-wider text-white transition-all shadow-xl hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center space-x-2 mt-2 ${isDark ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 shadow-blue-900/20'}`}
-                >
-                  <LogIn size={18} />
-                  <span>{isSubmittingAuth ? 'Autenticando...' : 'Acessar o Sistema'}</span>
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleEmailRegister} className="space-y-3 text-left">
-                <div>
-                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    Nome Completo / Posto / Graduação
-                  </label>
-                  <input
-                    type="text"
-                    value={registerName}
-                    onChange={(e) => setRegisterName(e.target.value)}
-                    placeholder="Ex: Cap. QOBM João Silva"
-                    required
-                    className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                  />
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                    E-mail Institucional ou Pessoal
-                  </label>
-                  <input
-                    type="email"
-                    value={registerEmail}
-                    onChange={(e) => setRegisterEmail(e.target.value)}
-                    placeholder="avaliador@exemplo.com"
-                    required
-                    className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                      Senha (mín. 6)
-                    </label>
-                    <input
-                      type="password"
-                      value={registerPassword}
-                      onChange={(e) => setRegisterPassword(e.target.value)}
-                      placeholder="••••••••"
-                      required
-                      minLength={6}
-                      className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
-                      Confirmar Senha
-                    </label>
-                    <input
-                      type="password"
-                      value={registerConfirmPassword}
-                      onChange={(e) => setRegisterConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
-                      required
-                      minLength={6}
-                      className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:border-blue-500' : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-blue-600 focus:bg-white'} outline-none`}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSubmittingAuth}
-                  className={`w-full py-3.5 px-6 rounded-2xl font-black text-sm uppercase tracking-wider text-white transition-all shadow-xl hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center space-x-2 mt-3 ${isDark ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30' : 'bg-emerald-700 hover:bg-emerald-800 shadow-emerald-900/20'}`}
-                >
-                  <Shield size={18} />
-                  <span>{isSubmittingAuth ? 'Criando Conta...' : 'Cadastrar e Acessar'}</span>
-                </button>
-              </form>
-            )}
+            <button 
+              type="button"
+              onClick={loginWithGoogle}
+              className={`w-full py-4 px-6 rounded-2xl font-black text-sm uppercase tracking-wider transition-all border flex items-center justify-center space-x-3 duration-300 shadow-xl hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-blue-900/40' : 'bg-[#003B95] hover:bg-[#002b6d] text-white border-[#003B95] shadow-blue-900/20'}`}
+            >
+              <LogIn size={20} />
+              <span>Acessar com Conta Google</span>
+            </button>
 
             {authError && (
-              <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-start space-x-3 animate-in fade-in duration-300 text-left">
-                <AlertCircle size={18} className="shrink-0 mt-0.5" />
-                <div className="space-y-2 flex-1">
+              <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center space-x-3 animate-in fade-in duration-300 text-left">
+                <AlertCircle size={18} className="shrink-0" />
+                <div className="space-y-1">
                   <p className="leading-snug">{authError}</p>
-                  <button
-                    type="button"
-                    onClick={() => handleDirectAccess()}
-                    className={`w-full py-2.5 px-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center space-x-2 ${isDark ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40' : 'bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300'}`}
+                  <button 
+                    onClick={loginWithGoogle}
+                    className="text-xs font-bold underline hover:opacity-80 block"
                   >
-                    <Shield size={14} />
-                    <span>Acessar Imediatamente em Modo de Contingência</span>
+                    Clique aqui para tentar com o Google
                   </button>
                 </div>
               </div>
@@ -4158,10 +3953,10 @@ const App = () => {
             <div className={`p-4 rounded-2xl border text-left space-y-1.5 ${isDark ? 'bg-slate-800/40 border-slate-700/60 text-slate-400' : 'bg-blue-50/50 border-blue-100 text-slate-600'}`}>
               <div className="flex items-center space-x-2 text-[11px] font-black uppercase tracking-wider text-blue-500">
                 <Shield size={14} />
-                <span>Acesso Seguro com E-mail e Senha</span>
+                <span>Acesso Institucional Seguro</span>
               </div>
               <p className="text-xs leading-relaxed">
-                Cadastre seus dados de avaliador ou entre com seu e-mail e senha cadastrados para acessar o sistema de laudos.
+                Utilize sua conta institucional Google (<span className="font-semibold text-blue-500">@gmail.com</span>) vinculada à comissão avaliadora do CBMPR.
               </p>
             </div>
           </div>
@@ -4602,6 +4397,15 @@ const App = () => {
                 <span className="hidden md:inline">Instalar</span>
               </button>
             )}
+
+            <button 
+              onClick={() => setShowUserManualModal(true)} 
+              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
+              title="Manual do Usuário"
+              aria-label="Manual do Usuário"
+            >
+              <BookOpen size={16} className="text-blue-500 sm:w-[18px] sm:h-[18px]" />
+            </button>
 
             <button 
               onClick={toggleTheme} 

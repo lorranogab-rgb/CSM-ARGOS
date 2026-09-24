@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
+    base: '/',
     plugins: [
       react(),
       tailwindcss(),
@@ -18,7 +19,7 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         manifest: false, // using manifest.json from public
         workbox: {
-          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024 // 5MB
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024 // 5MB
         }
       })
     ],
@@ -39,17 +40,7 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
-      emptyOutDir: true,
-      chunkSizeWarningLimit: 2000,
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            'vendor-react': ['react', 'react-dom'],
-            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
-            'vendor-utils': ['jspdf', 'jspdf-autotable', 'xlsx', 'html2canvas', 'recharts']
-          }
-        }
-      }
+      emptyOutDir: true
     }
   };
 });

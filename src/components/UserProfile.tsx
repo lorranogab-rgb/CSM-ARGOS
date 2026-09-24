@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, FlaskConical, ShieldCheck, Sparkles, Database } from 'lucide-react';
+import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, FlaskConical, ShieldCheck, Sparkles } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { updateProfile, updatePassword, User as FirebaseUser, EmailAuthProvider, reauthenticateWithCredential, reauthenticateWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 
@@ -53,13 +53,26 @@ export const UserProfile: React.FC<UserProfileProps> = ({
       setRequiresRecentLogin(false);
       setMessage({ type: 'success', text: 'Reautenticado com sucesso. Você já pode salvar as alterações.' });
     } catch (error: unknown) {
-      console.warn('Reauthentication notice:', error);
       const errMessage = error instanceof Error ? error.message : String(error);
       const errCode = typeof error === 'object' && error !== null ? (error as {code?: string}).code : undefined;
+      const errStr = String(error);
+
+      if (errCode === 'auth/popup-closed-by-user' || 
+          errCode === 'auth/cancelled-popup-request' ||
+          errMessage.includes('auth/popup-closed-by-user') ||
+          errMessage.includes('auth/cancelled-popup-request') ||
+          errStr.includes('auth/popup-closed-by-user') ||
+          errStr.includes('auth/cancelled-popup-request')) {
+        return;
+      }
+
+      console.warn('Reauthentication notice:', error);
       if (errCode === 'auth/invalid-credential' || 
           errMessage.includes('auth/invalid-credential') || 
           errMessage.includes('invalid-credential')) {
         setMessage({ type: 'error', text: 'Senha atual incorreta. Por favor, verifique e tente novamente.' });
+      } else if (errCode === 'auth/popup-blocked') {
+        setMessage({ type: 'error', text: 'O pop-up de reautenticação foi bloqueado pelo seu navegador.' });
       } else {
         setMessage({ type: 'error', text: 'Erro ao reautenticar: ' + (errMessage || 'Verifique sua senha atual.') });
       }
@@ -292,10 +305,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({
                <div className="flex flex-col sm:flex-row justify-end pt-6 gap-3">
                   <button 
                     type="button" 
-                    onClick={() => {
-                      try { localStorage.removeItem('csm_local_user'); } catch {}
-                      signOut(auth);
-                    }}
+                    onClick={() => signOut(auth)}
                     className={`flex items-center justify-center space-x-2 px-8 py-3 rounded-xl font-bold uppercase tracking-widest text-sm transition-all focus:ring-4 focus:ring-red-500/50 ${isDark ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'} active:scale-95`}
                   >
                      <span>Sair do Aplicativo</span>
