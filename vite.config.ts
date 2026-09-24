@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         manifest: false, // using manifest.json from public
         workbox: {
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024 // 5MB
+          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024 // 5MB
         }
       })
     ],

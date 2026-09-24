@@ -6,8 +6,9 @@ import html2canvas from 'html2canvas';
 import { toJpeg } from 'html-to-image';
 import { useReactToPrint } from 'react-to-print';
 import JSZip from 'jszip';
-import { saveAs } from 'file-saver';
+import saveAs from 'file-saver';
 import Cropper from 'react-easy-crop';
+import { matchVehicleWithInspection, findInspectionForVehicle } from './utils/vehicleMatcher';
 import { getCroppedImg } from './lib/cropUtils';
 import { compressImageFile } from './lib/imageCompressor';
 import { 
@@ -17,8 +18,6 @@ import {
   saveActiveInspectionDraft,
   getActiveInspectionDraft,
   clearActiveInspectionDraft,
-  getAllActiveDrafts,
-  getDraftStorageKey,
   ActiveInspectionDraft
 } from './lib/indexedDb';
 import { LoadingArgos } from './components/LoadingArgos';
@@ -42,7 +41,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { Toaster, toast } from 'sonner';
-import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from './lib/firebase';
+import { auth, db, googleProvider, handleFirestoreError, OperationType } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
 import { MOCK_VEHICLES, MOCK_INSPECTIONS } from './data/mockData';
@@ -746,10 +745,11 @@ const AnalyticsHeader = ({ inspectedResults, isDark }: { inspectedResults: any[]
 
 const DashboardSummary = ({ frota, inspectedResults, isDark, setActiveTab }: { frota: any[], inspectedResults: any[], isDark: boolean, setActiveTab: (tab: string) => void }) => {
   const totalFleet = frota.length;
-  const evaluatedPlacas = new Set(inspectedResults.map(r => r.placa));
-  const evaluatedCount = inspectedResults.length;
-  const availableToEvaluateCount = frota.filter(v => !evaluatedPlacas.has(v.placa)).length;
-  const progressPct = totalFleet > 0 ? Math.round((evaluatedCount / (availableToEvaluateCount + evaluatedCount)) * 100) : 0;
+  const inspectedVehiclesCount = frota.filter(v => inspectedResults.some(r => matchVehicleWithInspection(v, r))).length;
+  const evaluatedCount = Math.max(inspectedResults.length, inspectedVehiclesCount);
+  const availableToEvaluateCount = Math.max(0, frota.filter(v => !inspectedResults.some(r => matchVehicleWithInspection(v, r))).length);
+  const totalDenominator = availableToEvaluateCount + evaluatedCount;
+  const progressPct = totalDenominator > 0 ? Math.round((evaluatedCount / totalDenominator) * 100) : 0;
   
   const data = [
     { name: 'Aguardando', value: availableToEvaluateCount, color: isDark ? '#374151' : '#e5e7eb' },
@@ -983,15 +983,15 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
     }
   };
 
-  const inspection = inspectedResults.find((r: any) => r.placa === vehicle.placa);
-  const hasImpediment = inspection?.hasImpediment || inspection?.class === 'IMPEDIMENTOS';
+  const inspection = findInspectionForVehicle(vehicle, inspectedResults);
+  const hasImpediment = inspection?.hasImpediment || inspection?.class === 'IMPEDIMENTOS' || inspection?.fullData?.hasImpediment;
 
   // Calculate assessed values if inspection exists
   // valuationPercent is a number like 15, 25, 35, 50
   const fipeVal = parseCurrency(vehicle.fipe);
   const vPerc = inspection ? (typeof inspection.valuationPercent === 'number' ? inspection.valuationPercent : parseFloat(inspection.valuationPercent) || 0) : 0;
   const assessedValuation = inspection ? (fipeVal * (vPerc / 100)) : null;
-  const showPending = !isVistoriado;
+  const showPending = !inspection;
 
   // Use values from inspection if available (e.g. Renavam/Combustível produced by the wizard)
   const displayVehicle = inspection?.fullData?.vehicle ? { ...vehicle, ...inspection.fullData.vehicle } : vehicle;
@@ -1270,25 +1270,20 @@ const App = () => {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(new Date());
 
-  // Mecanismo de Salvamento Automático de Vistoria em Andamento (Segregado por Usuário)
+  // Mecanismo de Salvamento Automático de Vistoria em Andamento
   const [activeDraftInfo, setActiveDraftInfo] = useState<{
     placa?: string;
     modelo?: string;
     phase?: string;
     updatedAtFormatted?: string;
-    userId?: string;
-    userEmail?: string;
-    userName?: string;
-  } | null>(null);
-  const [otherUsersDrafts, setOtherUsersDrafts] = useState<ActiveInspectionDraft[]>([]);
-  const [foreignDraftAlertModal, setForeignDraftAlertModal] = useState<{
-    vehicle: any;
-    otherDraft: ActiveInspectionDraft;
   } | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string | null>(null);
   const [showDiscardDraftModal, setShowDiscardDraftModal] = useState(false);
   const [pendingVehicleToInspect, setPendingVehicleToInspect] = useState<any>(null);
+
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   // Refs para capturar o estado mais recente em eventos do navegador móvel (visibilitychange, pagehide)
   const laudoDataRef = useRef(laudoData);
@@ -1297,6 +1292,7 @@ const App = () => {
   const wizStepRef = useRef(wizStep);
   const activeTabRef = useRef(activeTab);
   const viewModeRef = useRef(viewMode);
+  const userRef = useRef(user);
 
   useEffect(() => {
     laudoDataRef.current = laudoData;
@@ -1305,7 +1301,8 @@ const App = () => {
     wizStepRef.current = wizStep;
     activeTabRef.current = activeTab;
     viewModeRef.current = viewMode;
-  }, [laudoData, wizPhase, wizSubPhase, wizStep, activeTab, viewMode]);
+    userRef.current = user;
+  }, [laudoData, wizPhase, wizSubPhase, wizStep, activeTab, viewMode, user]);
 
   const filteredInspectedResults = useMemo(() => {
     let results = inspectedResults;
@@ -1447,14 +1444,6 @@ const App = () => {
 
   const yardStats = useMemo(() => {
     const stats: Record<string, { total: number; inspected: number; impediments: number; address: string }> = {};
-    
-    // Lista de placas com vistorias e impedimentos para cruzamento rápido
-    const inspectedPlates = new Set(inspectedResults.map(r => r.placa));
-    const impedimentPlates = new Set(
-      inspectedResults
-        .filter(r => r.fullData?.hasImpediment || r.class === 'IMPEDIMENTOS')
-        .map(r => r.placa)
-    );
 
     frota.forEach(v => {
       const city = String(v.municipio || 'NÃO INFORMADO').toUpperCase();
@@ -1467,12 +1456,12 @@ const App = () => {
         stats[city].address = v.enderecoPatio;
       }
       
-      if (inspectedPlates.has(v.placa)) {
+      const insp = findInspectionForVehicle(v, inspectedResults);
+      if (insp) {
         stats[city].inspected += 1;
-      }
-      
-      if (impedimentPlates.has(v.placa)) {
-        stats[city].impediments += 1;
+        if (insp.fullData?.hasImpediment || insp.class === 'IMPEDIMENTOS' || insp.hasImpediment) {
+          stats[city].impediments += 1;
+        }
       }
     });
 
@@ -1505,13 +1494,6 @@ const App = () => {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  const [user, setUser] = useState<User | null>(null);
-  const userRef = useRef<User | null>(user);
-  useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-  const [authReady, setAuthReady] = useState(false);
-  const [authEmail, setAuthEmail] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [viewingHistory, setViewingHistory] = useState<string | null>(null);
   const [selectedYard, setSelectedYard] = useState<string | null>(null);
@@ -1628,10 +1610,6 @@ const App = () => {
       document.body.style.overflow = 'unset';
     };
   }, [isMenuOpen]);
-  const [authPassword, setAuthPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
@@ -1659,17 +1637,16 @@ const App = () => {
   };
 
   const handleViewInspectionFromDetails = (v: any) => {
-    const isVistoriado = evaluatedPlacaSet.has(v.placa);
-    if (!isVistoriado) return;
+    const existing = findInspectionForVehicle(v, inspectedResults);
+    if (!existing) return;
     
-    const existing = inspectedResults.find((r: any) => r.placa === v.placa);
-    if (existing && existing.fullData) {
+    if (existing.fullData) {
       setLaudoData(existing.fullData);
       setViewMode(true);
       setSourceTab(activeTab);
       setActiveTab('mimico');
       setViewingVehicleDetails(null);
-    } else if (existing) {
+    } else {
       const defaultChecklist: any = {};
       if (typeof CHECKLIST_MASTER_LIST !== 'undefined') {
         CHECKLIST_MASTER_LIST.forEach((item: string) => defaultChecklist[item] = 'S');
@@ -1742,30 +1719,33 @@ const App = () => {
     }
     
     try {
-      // 1. Fetch vehicles (All authenticated inspectors see the fleet)
-      const vQuery = query(collection(db, "vehicles"));
-      const vSnap = await getDocs(vQuery);
-      const vData = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
-      vData.sort((a: any, b: any) => (b.uploadedAt?.toMillis() || 0) - (a.uploadedAt?.toMillis() || 0));
-      if (vData.length > 0) {
-        setFrota(vData);
-      } else {
-        setFrota(INITIAL_FROTA);
-      }
-
-      // 2. Fetch inspections from Firestore
+      // 1. Fetch inspections from Firestore
       const iQuery = query(collection(db, "inspections"));
       const iSnap = await getDocs(iQuery);
       const iData = iSnap.docs
-        .map(d => ({ ...d.data(), id: d.id } as Inspection))
+        .map(d => {
+          const raw = d.data();
+          const full = raw.fullData || raw;
+          const v = full.vehicle || {};
+          return {
+            ...raw,
+            id: d.id,
+            placa: raw.placa || v.placa || full.placa || '',
+            modelo: raw.modelo || v.modelo || full.modelo || '',
+            chassi: raw.chassi || v.chassi || full.chassi || '',
+            patrimonio: raw.patrimonio || v.patrimonio || full.patrimonio || '',
+            renavam: raw.renavam || v.renavam || full.renavam || '',
+            fullData: full
+          } as unknown as Inspection;
+        })
         .filter(d => !deletedIds.includes(d.id) && !deletedIds.includes(d.fullData?.id));
       
-      // 3. Merge with any locally stored offline inspections (excluding deleted ones)
+      // Merge with any locally stored offline inspections (excluding deleted ones)
       try {
         const idbInspections = await getLocalInspections().catch(() => []);
         for (const item of idbInspections) {
           if (deletedIds.includes(item.id) || deletedIds.includes(item.fullData?.id)) continue;
-          if (!iData.some(remote => (remote.id && remote.id === item.id) || (remote.placa === item.placa && remote.data === item.data))) {
+          if (!iData.some(remote => (remote.id && remote.id === item.id) || matchVehicleWithInspection(remote, item))) {
             iData.push(item);
           }
         }
@@ -1774,7 +1754,7 @@ const App = () => {
           const localList: any[] = JSON.parse(localRaw);
           for (const item of localList) {
             if (deletedIds.includes(item.id) || deletedIds.includes(item.fullData?.id)) continue;
-            if (!iData.some(remote => (remote.id && remote.id === item.id) || (remote.placa === item.placa && remote.data === item.data))) {
+            if (!iData.some(remote => (remote.id && remote.id === item.id) || matchVehicleWithInspection(remote, item))) {
               iData.push(item);
             }
           }
@@ -1790,6 +1770,43 @@ const App = () => {
 
       iData.sort((a: any, b: any) => (b.inspectedAt?.toMillis() || (b.inspectedAt?.seconds ? b.inspectedAt.seconds * 1000 : 0)) - (a.inspectedAt?.toMillis() || (a.inspectedAt?.seconds ? a.inspectedAt.seconds * 1000 : 0)));
       setInspectedResults(iData);
+
+      // 2. Fetch vehicles from Firestore
+      const vQuery = query(collection(db, "vehicles"));
+      const vSnap = await getDocs(vQuery);
+      const vData = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
+      vData.sort((a: any, b: any) => (b.uploadedAt?.toMillis() || 0) - (a.uploadedAt?.toMillis() || 0));
+
+      // Also merge any cached local custom fleet from previous uploads if Firestore has fewer
+      try {
+        const cachedFrotaRaw = localStorage.getItem('argos_custom_frota');
+        if (cachedFrotaRaw) {
+          const cachedFrota: Vehicle[] = JSON.parse(cachedFrotaRaw);
+          for (const cVeh of cachedFrota) {
+            if (!vData.some(v => matchVehicleWithInspection(v, cVeh))) {
+              vData.push(cVeh);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao ler cache local de veículos:', err);
+      }
+
+      // Also ensure any vehicles present in real completed inspections are recognized in frota
+      for (const insp of iData) {
+        if (insp.fullData?.vehicle && !vData.some(v => matchVehicleWithInspection(v, insp))) {
+          vData.push(insp.fullData.vehicle as Vehicle);
+        }
+      }
+
+      if (vData.length > 0) {
+        setFrota(vData);
+      } else if (iData.length === 0 && !hasCleared && deletedIds.length === 0) {
+        // Only load mock if there are zero inspections and no cached fleet
+        setFrota(INITIAL_FROTA);
+      } else {
+        setFrota([]);
+      }
     } catch (e) {
       console.warn("Could not load remote Firestore data, using local/initial cache:", e);
       try {
@@ -1818,6 +1835,19 @@ const App = () => {
         } else {
           setInspectedResults([]);
         }
+      }
+      
+      try {
+        const cachedFrotaRaw = localStorage.getItem('argos_custom_frota');
+        if (cachedFrotaRaw) {
+          const parsedFrota = JSON.parse(cachedFrotaRaw);
+          if (Array.isArray(parsedFrota) && parsedFrota.length > 0) {
+            setFrota(parsedFrota);
+            return;
+          }
+        }
+      } catch {
+        // ignore
       }
       setFrota(INITIAL_FROTA);
     }
@@ -1916,16 +1946,16 @@ const App = () => {
     }, 50);
   }, [activeTab, page, wizPhase, wizStep]);
 
-  // Função para salvar imediatamente o rascunho da vistoria em andamento com restrição por usuário
+  // Função para salvar imediatamente o rascunho da vistoria em andamento
   const saveCurrentDraft = useCallback(() => {
     const currentLaudo = laudoDataRef.current;
     const currentViewMode = viewModeRef.current;
     if (!currentLaudo || currentViewMode) return;
 
     const currentUser = userRef.current;
-    const currentUid = currentUser?.uid || auth.currentUser?.uid || 'guest';
-    const currentUserEmail = currentUser?.email || auth.currentUser?.email || '';
-    const currentUserName = currentUser?.displayName || auth.currentUser?.displayName || currentUserEmail || 'Avaliador';
+    const currentUserId = currentUser?.uid;
+    // Não salva rascunho se não houver usuário autenticado
+    if (!currentUserId) return;
 
     const currentPhase = wizPhaseRef.current;
     const currentSubPhase = wizSubPhaseRef.current;
@@ -1937,10 +1967,9 @@ const App = () => {
     const timeStr = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     const draftPayload: ActiveInspectionDraft = {
-      id: getDraftStorageKey(currentUid),
-      userId: currentUid,
-      userEmail: currentUserEmail,
-      userName: currentUserName,
+      id: `draft_${currentUserId}`,
+      userId: currentUserId,
+      userEmail: currentUser?.email || '',
       laudoData: currentLaudo,
       wizPhase: currentPhase,
       wizSubPhase: currentSubPhase,
@@ -1959,89 +1988,19 @@ const App = () => {
       }
     };
 
-    saveActiveInspectionDraft(draftPayload, currentUid).then(() => {
+    saveActiveInspectionDraft(draftPayload, currentUserId).then(() => {
       setAutoSaveStatus('saved');
       setLastAutoSaveTime(timeStr);
       setActiveDraftInfo({
         placa: currentLaudo.vehicle?.placa || 'VEÍCULO',
         modelo: currentLaudo.vehicle?.modelo || '',
         phase: currentPhase,
-        updatedAtFormatted: timeStr,
-        userId: currentUid,
-        userEmail: currentUserEmail,
-        userName: currentUserName
+        updatedAtFormatted: timeStr
       });
-      // Atualiza listagem de outros peritos em background
-      getAllActiveDrafts().then((all) => {
-        setOtherUsersDrafts(all.filter(d => Boolean(d.userId && d.userId !== currentUid)));
-      }).catch(() => {});
     }).catch((err) => {
       console.warn('Erro ao persistir rascunho de vistoria:', err);
       setAutoSaveStatus('idle');
     });
-  }, []);
-
-  // Carregamento do rascunho de vistoria restrito ao usuário logado
-  const loadUserDraft = useCallback(async (targetUid?: string | null) => {
-    if (!targetUid) {
-      setLaudoData(null);
-      setActiveDraftInfo(null);
-      setLastAutoSaveTime(null);
-      setAutoSaveStatus('idle');
-      return;
-    }
-
-    try {
-      const draft = await getActiveInspectionDraft(targetUid);
-      if (draft && draft.laudoData && !draft.viewMode && (draft.userId === targetUid || !draft.userId)) {
-        setLaudoData(draft.laudoData);
-        setWizPhase(draft.wizPhase || 'VEÍCULO');
-        setWizSubPhase(draft.wizSubPhase || 'TIPO');
-        setWizStep(draft.wizStep || 0);
-        const laudoVehicle = draft.laudoData?.vehicle as { placa?: string; modelo?: string } | undefined;
-        const p = draft.vehicleSummary?.placa || laudoVehicle?.placa || 'VEÍCULO';
-        const m = draft.vehicleSummary?.modelo || laudoVehicle?.modelo || '';
-        setActiveDraftInfo({
-          placa: p,
-          modelo: m,
-          phase: draft.wizPhase || 'VEÍCULO',
-          updatedAtFormatted: draft.updatedAtFormatted,
-          userId: targetUid,
-          userEmail: draft.userEmail,
-          userName: draft.userName
-        });
-        setLastAutoSaveTime(draft.updatedAtFormatted || null);
-        setAutoSaveStatus('saved');
-
-        // Se a sessão anterior foi interrompida no wizard, restaura imediatamente
-        if (draft.activeTab === 'wizard') {
-          setActiveTab('wizard');
-          toast.success(`Sua vistoria em andamento foi restaurada: ${p} (${m})`, { duration: 5000 });
-        }
-      } else {
-        // Usuário não possui rascunho: assegura que não carregue resíduos de outros usuários
-        setLaudoData(null);
-        setActiveDraftInfo(null);
-        setLastAutoSaveTime(null);
-        setAutoSaveStatus('idle');
-      }
-    } catch (err) {
-      console.warn('Erro ao restaurar rascunho salvo de vistoria do usuário:', err);
-    }
-  }, []);
-
-  const refreshOtherDrafts = useCallback(async (currentUid?: string | null) => {
-    try {
-      const all = await getAllActiveDrafts();
-      if (!currentUid) {
-        setOtherUsersDrafts([]);
-        return;
-      }
-      const others = all.filter(d => Boolean(d.userId && d.userId !== currentUid));
-      setOtherUsersDrafts(others);
-    } catch (err) {
-      console.warn('Erro ao consultar outros rascunhos no dispositivo:', err);
-    }
   }, []);
 
   // 2. Debounce de salvamento automático a cada alteração nos dados da vistoria ou passos
@@ -2099,11 +2058,40 @@ const App = () => {
       setAuthReady(true);
       if (u) {
         fetchInitialData(u.uid);
-        loadUserDraft(u.uid);
-        refreshOtherDrafts(u.uid);
+        // Carrega estritamente o rascunho em andamento pertencente ao usuário logado
+        getActiveInspectionDraft(u.uid).then((draft) => {
+          if (draft && draft.laudoData && !draft.viewMode && draft.userId === u.uid) {
+            setLaudoData(draft.laudoData);
+            setWizPhase(draft.wizPhase || 'VEÍCULO');
+            setWizSubPhase(draft.wizSubPhase || 'TIPO');
+            setWizStep(draft.wizStep || 0);
+            const laudoVehicle = draft.laudoData?.vehicle as { placa?: string; modelo?: string } | undefined;
+            const p = draft.vehicleSummary?.placa || laudoVehicle?.placa || 'VEÍCULO';
+            const m = draft.vehicleSummary?.modelo || laudoVehicle?.modelo || '';
+            setActiveDraftInfo({
+              placa: p,
+              modelo: m,
+              phase: draft.wizPhase || 'VEÍCULO',
+              updatedAtFormatted: draft.updatedAtFormatted
+            });
+            setLastAutoSaveTime(draft.updatedAtFormatted || null);
+            setAutoSaveStatus('saved');
+          } else {
+            setLaudoData(null);
+            setActiveDraftInfo(null);
+            setLastAutoSaveTime(null);
+            setAutoSaveStatus('idle');
+          }
+        }).catch((err) => {
+          console.warn("Erro ao restaurar rascunho do usuário:", err);
+          setLaudoData(null);
+          setActiveDraftInfo(null);
+        });
       } else {
-        loadUserDraft(null);
-        refreshOtherDrafts(null);
+        setLaudoData(null);
+        setActiveDraftInfo(null);
+        setLastAutoSaveTime(null);
+        setAutoSaveStatus('idle');
         setFrota(INITIAL_FROTA);
         try {
           const deletedRaw = localStorage.getItem('argos_deleted_laudo_ids');
@@ -2144,9 +2132,9 @@ const App = () => {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (e: any) {
-      console.warn('Aviso de login Google:', e?.code || e?.message);
-      const errorCode = e?.code || "";
-      const errorMessage = e?.message || "";
+      console.error(e);
+      const errorCode = e.code || "";
+      const errorMessage = e.message || "";
       const errorStr = String(e);
       
       if (errorCode === 'auth/network-request-failed') {
@@ -2154,88 +2142,13 @@ const App = () => {
       } else if (errorCode === 'auth/invalid-credential' || 
                  errorMessage.includes('invalid-credential') ||
                  errorStr.includes('invalid-credential')) {
-        setAuthError("Credenciais expiradas ou inválidas. Tente novamente pelo botão do Google.");
-      } else if (errorCode === 'auth/popup-closed-by-user' || errorCode === 'auth/cancelled-popup-request') {
-        // Usuário cancelou ou fechou a janela do Google
+        setAuthError("Credenciais inválidas ou sessão expirada. Por favor, tente novamente.");
+      } else if (errorCode === 'auth/popup-closed-by-user') {
+        // Just ignore if the user closed the popup
+      } else if (errorCode === 'auth/cancelled-popup-request') {
+        // Ignore duplicate popup requests
       } else {
         setAuthError("Erro na autenticação com Google: " + errorMessage);
-      }
-    }
-  };
-
-  const handleEmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-    const cleanEmail = authEmail.trim();
-    if (!cleanEmail) {
-      setAuthError("Informe seu e-mail.");
-      return;
-    }
-    if (!authPassword) {
-      setAuthError("Informe sua senha.");
-      return;
-    }
-
-    try {
-      if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, cleanEmail, authPassword);
-      } else {
-        await signInWithEmailAndPassword(auth, cleanEmail, authPassword);
-      }
-    } catch (e: any) {
-      console.warn('Aviso de autenticação por e-mail:', e?.code || e?.message);
-      const errorCode = e?.code || "";
-      const errorMessage = e?.message || "";
-      const errorStr = String(e);
-      
-      if (errorCode === 'auth/user-not-found' || 
-          errorCode === 'auth/wrong-password' || 
-          errorCode === 'auth/invalid-credential' ||
-          errorMessage.includes('auth/invalid-credential') ||
-          errorMessage.includes('invalid-credential') ||
-          errorStr.includes('invalid-credential')) {
-        if (cleanEmail.toLowerCase().includes('@gmail.com')) {
-          setAuthError("Credenciais inválidas. Como seu e-mail é do Google, recomendamos utilizar o botão 'Entrar com Google' abaixo ou cadastre-se se for o primeiro acesso.");
-        } else {
-          setAuthError("E-mail ou senha incorretos. Se ainda não possui cadastro com senha, clique em 'Cadastre-se' abaixo.");
-        }
-      } else if (errorCode === 'auth/email-already-in-use') {
-        setAuthError("Este e-mail já está em uso. Faça login ou redefina sua senha.");
-      } else if (errorCode === 'auth/weak-password') {
-        setAuthError("A senha deve ter pelo menos 6 caracteres.");
-      } else if (errorCode === 'auth/invalid-email') {
-        setAuthError("Formato de e-mail inválido.");
-      } else if (errorCode === 'auth/operation-not-allowed') {
-        setAuthError("O provedor de e-mail/senha não está habilitado no Firebase Console. Utilize 'Entrar com Google'.");
-      } else if (errorCode === 'auth/network-request-failed') {
-        setAuthError("Erro de conexão com o Firebase Auth. Verifique sua internet ou bloqueadores de anúncios.");
-      } else {
-        setAuthError("Erro na autenticação: " + (errorMessage || "Verifique os dados digitados."));
-      }
-    }
-  };
-
-  const handlePasswordReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanEmail = authEmail.trim();
-    if (!cleanEmail) {
-      setAuthError("Digite o e-mail da sua conta para enviarmos as instruções de redefinição de senha.");
-      return;
-    }
-    setAuthError(null);
-    try {
-      await sendPasswordResetEmail(auth, cleanEmail);
-      toast.success("E-mail de recuperação enviado com sucesso!");
-      setResetEmailSent(true);
-    } catch (e: any) {
-      console.warn('Aviso de redefinição de senha:', e?.code || e?.message);
-      const errorCode = e?.code || "";
-      if (errorCode === 'auth/user-not-found' || errorCode === 'auth/invalid-credential') {
-        setAuthError("Não encontramos uma conta cadastrada com este e-mail.");
-      } else if (errorCode === 'auth/invalid-email') {
-        setAuthError("E-mail inválido.");
-      } else {
-        setAuthError("Erro ao enviar recuperação: " + (e?.message || "Tente novamente mais tarde."));
       }
     }
   };
@@ -2361,9 +2274,6 @@ const App = () => {
     }
   };
 
-  const evaluatedPlacaSet = new Set(inspectedResults.map((r: any) => r.placa));
-  const impededPlacaSet = new Set(inspectedResults.filter((r: any) => r.class === 'IMPEDIMENTOS' || r.hasImpediment).map((r: any) => r.placa));
-
   const filteredFrotaFinal = frota.filter(v => {
     if (selectedYard && String(v.municipio || '').toUpperCase() !== selectedYard) return false;
 
@@ -2374,10 +2284,13 @@ const App = () => {
                           String(v.posicao || '').toLowerCase().includes(searchTerm.toLowerCase());
     if (!matchesSearch) return false;
 
-    const isVistoriado = evaluatedPlacaSet.has(v.placa);
-    if (statusFilter === 'vistoriados' && (!isVistoriado || impededPlacaSet.has(v.placa))) return false;
+    const insp = findInspectionForVehicle(v, inspectedResults);
+    const isVistoriado = !!insp;
+    const hasImpediment = insp?.hasImpediment || insp?.class === 'IMPEDIMENTOS' || insp?.fullData?.hasImpediment;
+
+    if (statusFilter === 'vistoriados' && (!isVistoriado || hasImpediment)) return false;
     if (statusFilter === 'pendentes' && isVistoriado) return false;
-    if (statusFilter === 'impedidos' && !impededPlacaSet.has(v.placa)) return false;
+    if (statusFilter === 'impedidos' && !hasImpediment) return false;
 
     if (uploaderFilter !== 'todos') {
       const uploader = v.uploadedByEmail || 'Desconhecido';
@@ -2605,8 +2518,7 @@ const App = () => {
   };
 
   const exportLaudosAsAnexoJ = () => {
-    const evaluatedPlacas = new Set(inspectedResults.map(r => r.placa));
-    const vehiclesWithLaudos = frota.filter(v => evaluatedPlacas.has(v.placa));
+    const vehiclesWithLaudos = frota.filter(v => findInspectionForVehicle(v, inspectedResults) !== undefined);
     
     if (vehiclesWithLaudos.length === 0) {
       alert("Nenhum veículo com laudo pronto para exportar.");
@@ -2618,7 +2530,7 @@ const App = () => {
     setTimeout(() => {
       try {
         const data = vehiclesWithLaudos.map(v => {
-          const laudo = inspectedResults.find(r => r.placa === v.placa);
+          const laudo = findInspectionForVehicle(v, inspectedResults);
           const fullData = laudo?.fullData || {};
           
           const formatCurrency = (val: any) => {
@@ -3048,47 +2960,64 @@ const App = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setLoadingTask({ type: 'inclusion', message: 'Carregando frota...' });
+    if (!user) {
+      toast.error("Por favor, conecte-se com sua conta Google no topo da tela antes de carregar a planilha no Firebase.");
+      if (e.target) e.target.value = '';
+      return;
+    }
+
+    setLoadingTask({ type: 'inclusion', message: 'Processando planilha do Item J...' });
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const data = event.target?.result;
         const workbook = XLSX.read(data, { type: 'binary' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Scan all sheets in the workbook to find the one with the best header match
+        const headerKeywords = ['placa', 'modelo', 'veiculo', 'chassi', 'ord', 'item', 'nº', 'patrimonio', 'gpm', 'renavam', 'marca', 'fipe', 'municipio', 'cidade', 'patio'];
+        let bestSheetName = workbook.SheetNames[0];
+        let bestRawRows: any[][] = [];
+        let bestHeaderIndex = 0;
+        let highestMatchesOverall = 0;
 
-        // Use header: 1 to get array of arrays for robust header detection
-        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        for (const sName of workbook.SheetNames) {
+          const ws = workbook.Sheets[sName];
+          if (!ws) continue;
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          if (!rows || rows.length === 0) continue;
 
-        if (rawRows.length > 0) {
-          // 1. Find the header row by searching for keywords
-          const headerKeywords = ['placa', 'modelo', 'veiculo', 'chassi', 'ord', 'item', 'nº', 'patrimonio', 'gpm'];
-          let headerIndex = 0;
-          let maxMatches = 0;
-
-          // Search first 20 rows for the best header candidate
-          for (let i = 0; i < Math.min(rawRows.length, 20); i++) {
-            const row = rawRows[i];
+          for (let i = 0; i < Math.min(rows.length, 50); i++) {
+            const row = rows[i];
             if (!row || !Array.isArray(row)) continue;
 
             let matches = 0;
             row.forEach(cell => {
               if (typeof cell === 'string') {
-                const normalized = cell.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                const normalized = cell.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
                 if (headerKeywords.some(kw => normalized.includes(kw))) {
                   matches++;
                 }
               }
             });
 
-            if (matches > maxMatches) {
-              maxMatches = matches;
-              headerIndex = i;
+            if (matches > highestMatchesOverall) {
+              highestMatchesOverall = matches;
+              bestSheetName = sName;
+              bestRawRows = rows;
+              bestHeaderIndex = i;
             }
           }
+        }
 
-          const headers = rawRows[headerIndex] || [];
-          const dataRows = rawRows.slice(headerIndex + 1);
+        if (bestRawRows.length === 0) {
+          const ws = workbook.Sheets[workbook.SheetNames[0]];
+          bestRawRows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          bestHeaderIndex = 0;
+        }
+
+        if (bestRawRows.length > 0) {
+          const headers = bestRawRows[bestHeaderIndex] || [];
+          const dataRows = bestRawRows.slice(bestHeaderIndex + 1);
 
           // Convert array of arrays back to objects using the found headers
           const jsonData = dataRows.map(row => {
@@ -3099,226 +3028,210 @@ const App = () => {
               }
             });
             return obj;
-          }).filter(obj => Object.values(obj).some(v => v !== undefined && v !== null && v !== ''));
+          }).filter(obj => Object.values(obj).some(v => v !== undefined && v !== null && String(v).trim() !== ''));
 
           if (jsonData.length > 0) {
             const getVal = (row: any, keys: string[], excludeRegex?: RegExp) => {
-            const rowKeys = Object.keys(row);
-            
-            // First pass: Exact match
-            for (const k of keys) {
-              const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-              const found = rowKeys.find(rk => {
-                const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-                return normalizedRK === normalizedK;
-              });
-              if (found) {
-                const val = row[found];
-                if (val === undefined || val === null) return "";
-                return typeof val === 'string' ? val.trim() : val;
+              const rowKeys = Object.keys(row);
+              
+              // First pass: Exact normalized match
+              for (const k of keys) {
+                const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                const found = rowKeys.find(rk => {
+                  const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                  return normalizedRK === normalizedK;
+                });
+                if (found) {
+                  const val = row[found];
+                  if (val === undefined || val === null) return "";
+                  return typeof val === 'string' ? val.trim() : val;
+                }
               }
-            }
 
-            // Second pass: Regex word boundary match, but ignore columns matching excludeRegex
-            // We treat underscores and other non-alphanumeric chars as boundaries
-            for (const k of keys) {
-              const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-              const found = rowKeys.find(rk => {
-                const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-                if (excludeRegex && excludeRegex.test(normalizedRK)) return false;
-                
-                // Allow matching "placa" in "placa_veiculo" by treating _ as boundary
-                const searchRK = normalizedRK.replace(/_/g, ' ');
-                const regex = new RegExp(`\\b${normalizedK}\\b`);
-                return regex.test(searchRK) || normalizedRK.includes(normalizedK);
-              });
-              if (found) {
-                const val = row[found];
-                if (val === undefined || val === null) return "";
-                return typeof val === 'string' ? val.trim() : val;
+              // Second pass: Fuzzy substring match
+              for (const k of keys) {
+                const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                const found = rowKeys.find(rk => {
+                  const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+                  if (excludeRegex && excludeRegex.test(normalizedRK)) return false;
+                  
+                  const searchRK = normalizedRK.replace(/[_/]/g, ' ');
+                  const regex = new RegExp(`\\b${normalizedK}\\b`);
+                  return regex.test(searchRK) || normalizedRK.includes(normalizedK);
+                });
+                if (found) {
+                  const val = row[found];
+                  if (val === undefined || val === null) return "";
+                  return typeof val === 'string' ? val.trim() : val;
+                }
               }
-            }
-            return '';
-          };
+              return '';
+            };
 
-          let hasOrdColumn = false;
-          const possibleOrdKeys = ['ord', 'ord.', 'ordem', 'nº', 'numero', 'n.', 'item'];
-          if (jsonData.length > 0) {
+            let hasOrdColumn = false;
+            const possibleOrdKeys = ['ord', 'ord.', 'ordem', 'nº', 'numero', 'n.', 'item', 'lote'];
             const firstRowKeys = Object.keys(jsonData[0] || {});
             hasOrdColumn = firstRowKeys.some(rk => {
                const nRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-               return possibleOrdKeys.includes(nRK) || nRK === 'n'; // Check for variations
+               return possibleOrdKeys.includes(nRK) || nRK === 'n';
             });
-          }
 
-          const newFrota = jsonData.map((row: any, index: number) => {
-            const rawFipe = getVal(row, ['fipe', 'valor', 'avaliacao', 'fipe valor']);
-            
-            const rawEnderecoCombo = getVal(row, ['endereço do pátio', 'endereco do patio', 'endereco patio']);
-            let extractedRua = '';
-            let extractedNum = '';
-            let extractedBairro = '';
-            
-            if (typeof rawEnderecoCombo === 'string' && rawEnderecoCombo.trim()) {
-              const parts = rawEnderecoCombo.split('-');
-              const leftSide = parts[0] ? parts[0].trim() : '';
-              extractedBairro = parts.length > 1 ? parts.slice(1).join('-').trim() : '';
+            const newFrota = jsonData.map((row: any, index: number) => {
+              const rawFipe = getVal(row, ['fipe', 'valor', 'avaliacao', 'fipe valor', 'valor fipe', 'avaliação', 'valor avaliado']);
+              const rawEnderecoCombo = getVal(row, ['endereço do pátio', 'endereco do patio', 'endereco patio', 'endereço pátio', 'local do patio', 'pátio', 'patio', 'localizacao', 'localização']);
               
-              if (leftSide.includes(',')) {
-                const commaParts = leftSide.split(',');
-                extractedRua = commaParts[0].trim();
-                extractedNum = commaParts.slice(1).join(',').trim();
-              } else {
-                extractedRua = leftSide;
-              }
-            }
-
-            return {
-              _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº', 'item']),
-              id: `upload-${Date.now()}-${index}`,
-              orgao: getVal(row, ['orgao', 'unidade', 'secretaria', 'órgão']),
-              placa: getVal(row, ['placa', 'prefixo', 'identificacao', 'placa/prefixo']),
-              modelo: getVal(row, ['modelo', 'veiculo', 'descricao', 'marca', 'especificacao', 'marca/modelo']),
-              tipo: getVal(row, ['tipo', 'categoria']),
-              avaliacao: getVal(row, ['avaliacao', 'valor avaliado', 'preco', 'avaliação']),
-              fipe: (() => {
-                const fVal = typeof rawFipe === 'number' ? rawFipe : parseFloat(String(rawFipe).replace(/[^\d.,]/g, '').replace(',', '.') || '0');
-                return isNaN(fVal) ? 0 : fVal;
-              })(),
-              chassi: getVal(row, ['chassi', 'chassis', 'serie']),
-              motor: getVal(row, ['motor', 'n motor', 'numero motor', 'núm. do motor']),
-              municipio: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao']),
-              cor: getVal(row, ['cor', 'pintura', 'cor/doc', 'cor/doc.']),
-              ano: getVal(row, ['ano', 'fabricacao', 'ano/mod']),
-              comb: getVal(row, ['comb', 'comb.', 'combustivel', 'combustível']),
-              origem: getVal(row, ['origem']),
-              renavam: getVal(row, ['renavam']),
-              pctFipe: getVal(row, ['% fipe', 'percentual fipe', 'pct fipe', '% da fipe']),
-              precoMinimo: getVal(row, ['preco minimo', 'preco_minimo', 'valor minimo', 'preço mínimo']),
-              situacaoDetran: getVal(row, ['situacao detran', 'situacao_detran', 'detran', 'situação detran']),
-              patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio', 'gpm/patrimonio']),
-              enderecoPatio: rawEnderecoCombo || getVal(row, ['endereco do patio', 'endereco patio', 'localizacao', 'endereço do pátio']),
-              endereco: {
-                rua: extractedRua || getVal(row, ['rua', 'logradouro', 'endereco', 'endereço']),
-                num: extractedNum || getVal(row, ['num', 'numero', 'nº', 'número'], /\b(motor|chassi|patrimonio|serie)\b/),
-                bairro: extractedBairro || getVal(row, ['bairro', 'distrito', 'vila']),
-                cidade: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao'])
-              }
-            };
-          });
-
-          const validFrotaRaw = newFrota.filter(f => {
-            const hasPlaca = f.placa && String(f.placa).trim().length > 0;
-            const hasChassi = f.chassi && String(f.chassi).trim().length > 0;
-            const hasPatrimonio = f.patrimonio && String(f.patrimonio).trim().length > 0;
-            const hasModel = f.modelo && String(f.modelo).trim().length > 0;
-            const hasRenavam = f.renavam && String(f.renavam).trim().length > 0;
-
-            // If any identification or basic info is present, we consider it a valid row
-            if (hasPlaca || hasChassi || hasPatrimonio || hasModel || hasRenavam) return true;
-
-            // If there's an Ord column, check if it has any content
-            if (hasOrdColumn) {
-               return f._ord !== undefined && f._ord !== '' && f._ord !== null;
-            }
-            
-            return false;
-          });
-
-          // Deduplicate incoming list (both against existing and within itself)
-          const validFrota: any[] = [];
-          const normalizeStr = (s: any) => typeof s === 'string' ? s.replace(/[^A-Za-z0-9]/g, '').toUpperCase() : String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-          
-          for (const newVeh of validFrotaRaw) {
-            const nPlaca = normalizeStr(newVeh.placa);
-            const nPat = normalizeStr(newVeh.patrimonio);
-            const nChassi = normalizeStr(newVeh.chassi);
-            
-            const existsInDb = frota.some(f => 
-              (nPlaca && normalizeStr(f.placa) === nPlaca) || 
-              (nPat && normalizeStr(f.patrimonio) === nPat) || 
-              (nChassi && normalizeStr(f.chassi) === nChassi)
-            );
-            
-            const existsInQueue = validFrota.some(f => 
-              (nPlaca && normalizeStr(f.placa) === nPlaca) || 
-              (nPat && normalizeStr(f.patrimonio) === nPat) || 
-              (nChassi && normalizeStr(f.chassi) === nChassi)
-            );
-            
-            if (!existsInDb && !existsInQueue) {
-              validFrota.push(newVeh);
-            }
-          }
-
-          if (validFrota.length > 0) {
-            // Upload to Firestore
-            const uploadVehicles = async () => {
-              try {
-                const chunks = [];
-                for (let i = 0; i < validFrota.length; i += 500) {
-                  chunks.push(validFrota.slice(i, i + 500));
+              let extractedRua = '';
+              let extractedNum = '';
+              let extractedBairro = '';
+              
+              if (typeof rawEnderecoCombo === 'string' && rawEnderecoCombo.trim()) {
+                const parts = rawEnderecoCombo.split('-');
+                const leftSide = parts[0] ? parts[0].trim() : '';
+                extractedBairro = parts.length > 1 ? parts.slice(1).join('-').trim() : '';
+                
+                if (leftSide.includes(',')) {
+                  const commaParts = leftSide.split(',');
+                  extractedRua = commaParts[0].trim();
+                  extractedNum = commaParts.slice(1).join(',').trim();
+                } else {
+                  extractedRua = leftSide;
                 }
-
-                let processedCount = 0;
-                for (const chunk of chunks) {
-                  const batch = writeBatch(db);
-                  for (const v of chunk) {
-                    const newDocRef = doc(collection(db, "vehicles"));
-                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    const { id, _ord, ...rest } = v;
-                    batch.set(newDocRef, {
-                      ...rest,
-                      uploadedAt: serverTimestamp(),
-                      uploadedBy: user!.uid,
-                      uploadedByEmail: user!.email || 'unknown'
-                    });
-                  }
-                  await batch.commit();
-                  processedCount += chunk.length;
-                  setLoadingTask({ type: 'inclusion', message: 'Carregando frota...', progress: (processedCount / validFrota.length) * 100 });
-                }
-
-                fetchInitialData();
-                setActiveTab('selecao');
-                alert(`${validFrota.length} veículos carregados com sucesso! ${validFrotaRaw.length - validFrota.length > 0 ? `(${validFrotaRaw.length - validFrota.length} duplicados ignorados)` : ''}`);
-              } catch (e) {
-                handleFirestoreError(e, OperationType.CREATE, "vehicles");
-              } finally {
-                setLoadingTask(null);
-                e.target.value = ''; // Reset input
               }
-            };
-            uploadVehicles();
-          } else {
+
+              const placaVal = String(getVal(row, ['placa', 'prefixo', 'identificacao', 'placa/prefixo', 'placa_veiculo', 'placa / prefixo']) || '').toUpperCase().trim();
+              const modeloVal = String(getVal(row, ['modelo', 'veiculo', 'descricao', 'marca', 'especificacao', 'marca/modelo', 'marca / modelo', 'descrição', 'especificação', 'veículo', 'especificacao do bem']) || '').trim();
+              const chassiVal = String(getVal(row, ['chassi', 'chassis', 'serie', 'n chassi', 'numero chassi', 'nº chassi', 'nº do chassi']) || '').toUpperCase().trim();
+              const motorVal = String(getVal(row, ['motor', 'n motor', 'numero motor', 'núm. do motor', 'nº motor']) || '').trim();
+              const municipioVal = String(getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao', 'lotação', 'município']) || 'NÃO INFORMADO').toUpperCase().trim();
+
+              return {
+                _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº', 'item', 'lote']),
+                id: `upload-${Date.now()}-${index}`,
+                orgao: getVal(row, ['orgao', 'unidade', 'secretaria', 'órgão']) || 'CBMPR',
+                placa: placaVal,
+                modelo: modeloVal,
+                tipo: getVal(row, ['tipo', 'categoria']) || 'Veículo',
+                avaliacao: getVal(row, ['avaliacao', 'valor avaliado', 'preco', 'avaliação']),
+                fipe: (() => {
+                  const fVal = typeof rawFipe === 'number' ? rawFipe : parseFloat(String(rawFipe).replace(/[^\d.,]/g, '').replace(',', '.') || '0');
+                  return isNaN(fVal) ? 0 : fVal;
+                })(),
+                chassi: chassiVal,
+                motor: motorVal,
+                municipio: municipioVal,
+                cor: getVal(row, ['cor', 'pintura', 'cor/doc', 'cor/doc.']),
+                ano: getVal(row, ['ano', 'fabricacao', 'ano/mod', 'ano/modelo', 'ano mod', 'ano fab']),
+                comb: getVal(row, ['comb', 'comb.', 'combustivel', 'combustível']),
+                origem: getVal(row, ['origem']),
+                renavam: getVal(row, ['renavam', 'n renavam', 'código renavam']),
+                pctFipe: getVal(row, ['% fipe', 'percentual fipe', 'pct fipe', '% da fipe']),
+                precoMinimo: getVal(row, ['preco minimo', 'preco_minimo', 'valor minimo', 'preço mínimo']),
+                situacaoDetran: getVal(row, ['situacao detran', 'situacao_detran', 'detran', 'situação detran']),
+                patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio', 'gpm/patrimonio', 'gpm / patrimonio', 'nº gpm']),
+                enderecoPatio: rawEnderecoCombo || getVal(row, ['endereco do patio', 'endereco patio', 'localizacao', 'endereço do pátio', 'local']),
+                endereco: {
+                  rua: extractedRua || getVal(row, ['rua', 'logradouro', 'endereco', 'endereço']),
+                  num: extractedNum || getVal(row, ['num', 'numero', 'nº', 'número'], /\b(motor|chassi|patrimonio|serie)\b/),
+                  bairro: extractedBairro || getVal(row, ['bairro', 'distrito', 'vila']),
+                  cidade: municipioVal
+                }
+              };
+            });
+
+            const validFrotaRaw = newFrota.filter(f => {
+              const hasPlaca = f.placa && String(f.placa).trim().length > 0;
+              const hasChassi = f.chassi && String(f.chassi).trim().length > 0;
+              const hasPatrimonio = f.patrimonio && String(f.patrimonio).trim().length > 0;
+              const hasModel = f.modelo && String(f.modelo).trim().length > 0;
+              const hasRenavam = f.renavam && String(f.renavam).trim().length > 0;
+
+              if (hasPlaca || hasChassi || hasPatrimonio || hasModel || hasRenavam) return true;
+              if (hasOrdColumn) {
+                 return f._ord !== undefined && f._ord !== '' && f._ord !== null;
+              }
+              return false;
+            });
+
             if (validFrotaRaw.length > 0) {
-               alert(`Todos os ${validFrotaRaw.length} veículos da planilha já estão cadastrados no sistema.`);
+              // Upload to Firestore and save to localStorage
+              const uploadVehicles = async () => {
+                try {
+                  const chunks = [];
+                  for (let i = 0; i < validFrotaRaw.length; i += 500) {
+                    chunks.push(validFrotaRaw.slice(i, i + 500));
+                  }
+
+                  let processedCount = 0;
+                  const finalSavedList: Vehicle[] = [];
+
+                  for (const chunk of chunks) {
+                    const batch = writeBatch(db);
+                    for (const v of chunk) {
+                      const newDocRef = doc(collection(db, "vehicles"));
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      const { id, _ord, ...rest } = v;
+                      const savedObj: any = {
+                        ...rest,
+                        id: newDocRef.id,
+                        uploadedAt: serverTimestamp(),
+                        uploadedBy: user?.uid || 'authenticated',
+                        uploadedByEmail: user?.email || 'unknown'
+                      };
+                      batch.set(newDocRef, savedObj);
+                      finalSavedList.push(savedObj as Vehicle);
+                    }
+                    await batch.commit();
+                    processedCount += chunk.length;
+                    setLoadingTask({ type: 'inclusion', message: 'Salvando frota no Firebase...', progress: (processedCount / validFrotaRaw.length) * 100 });
+                  }
+
+                  // Cache to local storage immediately
+                  localStorage.setItem('argos_custom_frota', JSON.stringify(finalSavedList));
+                  
+                  // Update state directly with uploaded vehicles
+                  setFrota(finalSavedList);
+                  
+                  // Reload initial data
+                  await fetchInitialData(user.uid);
+                  setActiveTab('selecao');
+                  toast.success(`${validFrotaRaw.length} veículos da planilha (Aba: ${bestSheetName}) carregados com sucesso!`);
+                } catch (e: any) {
+                  console.error("Erro ao salvar veículos:", e);
+                  // Even if firestore errors, update locally
+                  localStorage.setItem('argos_custom_frota', JSON.stringify(validFrotaRaw));
+                  setFrota(validFrotaRaw);
+                  setActiveTab('selecao');
+                  toast.success(`${validFrotaRaw.length} veículos importados localmente no sistema.`);
+                } finally {
+                  setLoadingTask(null);
+                  if (e.target) e.target.value = ''; // Reset input
+                }
+              };
+              uploadVehicles();
             } else {
-               alert('Não foi possível identificar os veículos. Verifique o cabeçalho da planilha.');
+              toast.error('Não foi possível identificar os veículos na planilha. Verifique os títulos das colunas.');
+              setLoadingTask(null);
+              if (e.target) e.target.value = ''; // Reset input
             }
+          } else {
             setLoadingTask(null);
-            e.target.value = ''; // Reset input
+            if (e.target) e.target.value = '';
           }
         } else {
-          // jsonData.length === 0
           setLoadingTask(null);
-          e.target.value = '';
+          if (e.target) e.target.value = '';
         }
-      } else {
-        // rawRows.length === 0
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Erro ao ler o arquivo Excel: " + (err?.message || "Formato inválido"));
         setLoadingTask(null);
-        e.target.value = '';
       }
-    } catch (err) {
-      console.error(err);
-      setLoadingTask(null);
-    }
+    };
+    reader.readAsBinaryString(file);
   };
-  reader.readAsBinaryString(file);
-};
 
   const proceedWithNewInspection = (v: any) => {
-    const existing = inspectedResults.find(r => r.placa === v.placa);
+    const existing = findInspectionForVehicle(v, inspectedResults);
     if (existing && existing.fullData) {
       setLaudoData(existing.fullData);
     } else {
@@ -3352,29 +3265,15 @@ const App = () => {
   };
 
   const startInspection = (v: any) => {
-    const currentUid = userRef.current?.uid || auth.currentUser?.uid || 'guest';
-
-    // 1. Se este veículo já é o rascunho em andamento do próprio usuário logado, retoma diretamente sem resetar dados!
+    // 1. Se este veículo já é o rascunho em andamento, apenas retoma diretamente sem resetar dados!
     if (laudoData && laudoData.vehicle?.placa === v.placa && !viewMode) {
-      if (!activeDraftInfo?.userId || activeDraftInfo.userId === currentUid) {
-        setViewMode(false);
-        setActiveTab('wizard');
-        toast.info(`Retomando sua vistoria de ${v.placa}`);
-        return;
-      }
-    }
-
-    // 2. Restrição Pericial por Usuário: se o veículo tem rascunho iniciado por OUTRO usuário no dispositivo
-    const otherDraft = otherUsersDrafts.find(d => d.vehicleSummary?.placa === v.placa);
-    if (otherDraft && otherDraft.userId && otherDraft.userId !== currentUid) {
-      setForeignDraftAlertModal({
-        vehicle: v,
-        otherDraft
-      });
+      setViewMode(false);
+      setActiveTab('wizard');
+      toast.info(`Retomando vistoria de ${v.placa}`);
       return;
     }
 
-    // 3. Se há uma vistoria de outro veículo em andamento com dados preenchidos do próprio usuário, solicita confirmação
+    // 2. Se há uma vistoria de outro veículo em andamento com dados preenchidos, solicita confirmação
     if (laudoData && !viewMode && laudoData.vehicle?.placa && laudoData.vehicle?.placa !== v.placa) {
       saveCurrentDraft();
       setPendingVehicleToInspect(v);
@@ -3739,9 +3638,8 @@ const App = () => {
       // Smoothly redirect to dashboard right away
       setActiveTab('dashboard');
 
-      // Limpa o rascunho de vistoria em andamento deste usuário pois o laudo foi finalizado com sucesso
-      const currentInspectionUid = userRef.current?.uid || auth.currentUser?.uid;
-      await clearActiveInspectionDraft(currentInspectionUid).catch(() => {});
+      // Limpa o rascunho de vistoria em andamento pois o laudo foi finalizado com sucesso
+      await clearActiveInspectionDraft(userRef.current?.uid || user?.uid).catch(() => {});
       setActiveDraftInfo(null);
       setLastAutoSaveTime(null);
       setAutoSaveStatus('idle');
@@ -3835,171 +3733,44 @@ const App = () => {
           </div>
           
           <h1 className="text-3xl font-black tracking-tighter mb-2 italic">CSM:ARGOS</h1>
-          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-6 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
+          <h2 className={`text-sm font-semibold tracking-[0.2em] uppercase mb-8 ${isDark ? 'text-blue-500' : 'text-[#003B95]'}`}>Gestão Automatizada</h2>
           
-          {/* Opção Recomendada: Entrar com Google */}
-          {!isForgotPassword && (
-            <div className="mb-6">
-              <button 
-                type="button"
-                onClick={loginWithGoogle}
-                className="w-full py-3.5 px-4 rounded-2xl font-bold transition-all border flex items-center justify-center space-x-3 duration-200 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                </svg>
-                <span className="text-sm font-semibold text-slate-800">Entrar com o Google</span>
-              </button>
-              
-              <div className="flex items-center space-x-2 my-5">
-                <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
-                <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>Ou com E-mail e Senha</span>
-                <div className={`h-px flex-1 ${isDark ? 'bg-slate-800' : 'bg-gray-200'}`}></div>
+          {/* Primary Google Login */}
+          <div className="space-y-4">
+            <button 
+              type="button"
+              onClick={loginWithGoogle}
+              className={`w-full py-4 px-6 rounded-2xl font-black text-sm uppercase tracking-wider transition-all border flex items-center justify-center space-x-3 duration-300 shadow-xl hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-blue-900/40' : 'bg-[#003B95] hover:bg-[#002b6d] text-white border-[#003B95] shadow-blue-900/20'}`}
+            >
+              <LogIn size={20} />
+              <span>Acessar com Conta Google</span>
+            </button>
+
+            {authError && (
+              <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center space-x-3 animate-in fade-in duration-300 text-left">
+                <AlertCircle size={18} className="shrink-0" />
+                <div className="space-y-1">
+                  <p className="leading-snug">{authError}</p>
+                  <button 
+                    onClick={loginWithGoogle}
+                    className="text-xs font-bold underline hover:opacity-80 block"
+                  >
+                    Clique aqui para tentar com o Google
+                  </button>
+                </div>
               </div>
+            )}
+
+            <div className={`p-4 rounded-2xl border text-left space-y-1.5 ${isDark ? 'bg-slate-800/40 border-slate-700/60 text-slate-400' : 'bg-blue-50/50 border-blue-100 text-slate-600'}`}>
+              <div className="flex items-center space-x-2 text-[11px] font-black uppercase tracking-wider text-blue-500">
+                <Shield size={14} />
+                <span>Acesso Institucional Seguro</span>
+              </div>
+              <p className="text-xs leading-relaxed">
+                Utilize sua conta institucional Google (<span className="font-semibold text-blue-500">@gmail.com</span>) vinculada à comissão avaliadora do CBMPR.
+              </p>
             </div>
-          )}
-
-          {isForgotPassword ? (
-            <form onSubmit={handlePasswordReset} className="space-y-4 mb-6 text-left">
-              <div>
-                <h3 className="text-base font-bold mb-1">Recuperar Senha</h3>
-                <p className={`text-xs mb-4 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Informe o seu e-mail cadastrado e enviaremos um link para criar uma nova senha.
-                </p>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
-                <input 
-                  type="email" 
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  autoComplete="email"
-                  required
-                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
-                  placeholder="seu@email.com"
-                />
-              </div>
-
-              {resetEmailSent && (
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs font-semibold flex items-center space-x-2">
-                  <CheckCircle size={16} className="shrink-0" />
-                  <span>E-mail de recuperação enviado! Verifique sua caixa de entrada e spam.</span>
-                </div>
-              )}
-
-              {authError && (
-                <div className="p-3 rounded-xl bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-semibold flex items-start space-x-2">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p>{authError}</p>
-                  </div>
-                </div>
-              )}
-
-              <button 
-                type="submit"
-                className={`w-full py-3.5 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px] cursor-pointer`}
-              >
-                Enviar Link de Recuperação
-              </button>
-
-              <button 
-                type="button"
-                onClick={() => {
-                  setIsForgotPassword(false);
-                  setResetEmailSent(false);
-                  setAuthError(null);
-                }}
-                className={`w-full py-2 text-xs font-bold text-center ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-black'} cursor-pointer`}
-              >
-                Voltar para o Login
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleEmailAuth} className="space-y-4 mb-6 text-left">
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Email</label>
-                <input 
-                  type="email" 
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  autoComplete="email"
-                  required
-                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
-                  placeholder="seu@email.com"
-                />
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Senha</label>
-                  {!isSignUp && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsForgotPassword(true);
-                        setAuthError(null);
-                        setResetEmailSent(false);
-                      }}
-                      className={`text-[11px] font-semibold hover:underline ${isDark ? 'text-blue-400' : 'text-[#003B95]'}`}
-                    >
-                      Esqueceu a senha?
-                    </button>
-                  )}
-                </div>
-                <input 
-                  type="password" 
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                  className={`w-full px-4 py-3 rounded-xl border outline-none transition-all ${isDark ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-gray-50 border-gray-200 focus:border-blue-600 focus:ring-1 focus:ring-blue-600'}`}
-                  placeholder="••••••••"
-                />
-              </div>
-
-              {authError && (
-                <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300 text-xs font-medium space-y-2">
-                  <div className="flex items-start space-x-2">
-                    <AlertCircle size={16} className="shrink-0 text-red-500 mt-0.5" />
-                    <p className="flex-1">{authError}</p>
-                  </div>
-                  {authError.includes('Google') && (
-                    <button
-                      type="button"
-                      onClick={loginWithGoogle}
-                      className="w-full mt-2 py-2 px-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-[11px] uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <LogIn size={14} />
-                      <span>Fazer Login com Google Agora</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <button 
-                type="submit"
-                className={`w-full py-3.5 rounded-xl font-bold transition-all shadow-lg duration-300 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/30' : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-900/30'} hover:translate-y-[-1px] cursor-pointer`}
-              >
-                {isSignUp ? 'Criar Conta com E-mail' : 'Entrar'}
-              </button>
-            </form>
-          )}
-          
-          {!isForgotPassword && (
-            <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <button 
-                type="button"
-                onClick={() => {
-                  setIsSignUp(!isSignUp);
-                  setAuthError(null);
-                }}
-                className={`text-xs font-bold ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-[#003B95] hover:text-blue-800'} cursor-pointer`}
-              >
-                {isSignUp ? 'Já tem uma conta? Entre aqui' : 'Não tem conta? Cadastre-se com e-mail'}
-              </button>
-            </div>
-          )}
+          </div>
         </div>
         
         <div className={`mt-12 flex flex-col items-center justify-center gap-1 opacity-50`}>
@@ -4437,6 +4208,15 @@ const App = () => {
                 <span className="hidden md:inline">Instalar</span>
               </button>
             )}
+
+            <button 
+              onClick={() => setShowUserManualModal(true)} 
+              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
+              title="Manual do Usuário"
+              aria-label="Manual do Usuário"
+            >
+              <BookOpen size={16} className="text-blue-500 sm:w-[18px] sm:h-[18px]" />
+            </button>
 
             <button 
               onClick={toggleTheme} 
@@ -5087,8 +4867,9 @@ const App = () => {
                 <div className="space-y-3">
                   {filteredFrotaFinal.length > 0 ? (
                     paginatedFrota.map((v, i) => {
-                      const isVistoriado = evaluatedPlacaSet.has(v.placa);
-                      const hasImpediment = impededPlacaSet.has(v.placa);
+                      const vInsp = findInspectionForVehicle(v, inspectedResults);
+                      const isVistoriado = !!vInsp;
+                      const hasImpediment = vInsp?.hasImpediment || vInsp?.class === 'IMPEDIMENTOS' || vInsp?.fullData?.hasImpediment;
                       const isSelected = selectedVehicles.includes(v.id || '');
                       return (
                         <div 
@@ -5151,25 +4932,9 @@ const App = () => {
                                 {activeDraftInfo && activeDraftInfo.placa === v.placa && (
                                   <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-950 bg-amber-400 px-2 py-0.5 rounded-full animate-pulse shadow-sm">
                                     <Car size={10} />
-                                    <span>Sua Vistoria</span>
+                                    <span>Em Vistoria</span>
                                   </span>
                                 )}
-                                {(() => {
-                                  const otherDraft = otherUsersDrafts.find(d => d.vehicleSummary?.placa === v.placa);
-                                  if (otherDraft && (!activeDraftInfo || activeDraftInfo.placa !== v.placa)) {
-                                    const initialOrName = otherDraft.userName?.split(' ')[0] || otherDraft.userEmail?.split('@')[0] || 'Outro';
-                                    return (
-                                      <span 
-                                        className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-purple-700 bg-purple-100 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800 px-2 py-0.5 rounded-full border border-purple-200 shadow-sm"
-                                        title={`Em vistoria por ${otherDraft.userEmail || otherDraft.userName || 'outro avaliador'}`}
-                                      >
-                                        <Users size={10} />
-                                        <span>Em Vistoria ({initialOrName})</span>
-                                      </span>
-                                    );
-                                  }
-                                  return null;
-                                })()}
                                 {v.notes && (
                                   <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full animate-pulse" title={v.notes}>
                                     <FileText size={10} />
@@ -6929,7 +6694,7 @@ const App = () => {
             onStartInspection={handleStartInspectionFromDetails}
             onViewInspection={handleViewInspectionFromDetails}
             isDark={isDark}
-            isVistoriado={evaluatedPlacaSet.has(viewingVehicleDetails.placa)}
+            isVistoriado={findInspectionForVehicle(viewingVehicleDetails, inspectedResults) !== undefined}
             inspectedResults={inspectedResults}
             onUpdate={(id: string, updates: any) => {
               setFrota((prev) => prev.map((v) => v.id === id ? { ...v, ...updates } : v));
@@ -6963,14 +6728,13 @@ const App = () => {
                 </button>
                 <button
                   onClick={async () => {
-                    const currentInspectionUid = userRef.current?.uid || auth.currentUser?.uid;
-                    await clearActiveInspectionDraft(currentInspectionUid).catch(() => {});
+                    await clearActiveInspectionDraft(userRef.current?.uid || user?.uid).catch(() => {});
                     setLaudoData(null);
                     setActiveDraftInfo(null);
                     setLastAutoSaveTime(null);
                     setAutoSaveStatus('idle');
                     setShowDiscardDraftModal(false);
-                    toast.info("Sua vistoria em andamento foi descartada.");
+                    toast.info("Vistoria em andamento descartada.");
                   }}
                   className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md shadow-red-500/20 active:scale-95 cursor-pointer"
                 >
@@ -6991,11 +6755,11 @@ const App = () => {
                 </div>
                 <div>
                   <h3 className="text-base font-bold">Vistoria em Andamento</h3>
-                  <p className="text-xs opacity-60">Já existe um veículo sendo vistoriado por você.</p>
+                  <p className="text-xs opacity-60">Já existe um veículo sendo vistoriado.</p>
                 </div>
               </div>
               <p className={`text-sm mb-6 ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
-                Você já possui a vistoria do veículo <strong className="font-mono">{laudoData?.vehicle?.placa}</strong> em andamento. Deseja continuar sua vistoria anterior ou iniciar uma nova para o veículo <strong className="font-mono">{pendingVehicleToInspect?.placa}</strong>?
+                Você já possui a vistoria do veículo <strong className="font-mono">{laudoData?.vehicle?.placa}</strong> em andamento. Deseja continuar a vistoria anterior ou iniciar uma nova para o veículo <strong className="font-mono">{pendingVehicleToInspect?.placa}</strong>?
               </p>
               <div className="flex flex-col gap-2">
                 <button
@@ -7023,59 +6787,6 @@ const App = () => {
                   className={`w-full py-2 px-4 rounded-xl text-xs font-bold uppercase tracking-wider text-center transition-colors cursor-pointer ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
                 >
                   Cancelar
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal de Restrição de Vistoria de Outro Avaliador (Integridade Pericial) */}
-        {foreignDraftAlertModal && (
-          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className={`w-full max-w-md p-6 rounded-2xl border shadow-2xl animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
-              <div className="flex items-center space-x-3 mb-4">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isDark ? 'bg-purple-900/40 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
-                  <Shield size={22} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold">Vistoria de Outro Perito</h3>
-                  <p className="text-xs opacity-60">Processo restrito por avaliador</p>
-                </div>
-              </div>
-              <p className={`text-sm mb-4 ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
-                O veículo <strong className="font-mono">{foreignDraftAlertModal.vehicle?.placa}</strong> possui um processo de vistoria em andamento iniciado por:
-              </p>
-              <div className={`p-3 rounded-xl mb-4 text-xs space-y-1 ${isDark ? 'bg-slate-800/70 border border-slate-700 text-slate-200' : 'bg-gray-50 border border-gray-200 text-gray-800'}`}>
-                <div className="flex items-center gap-1.5 font-bold">
-                  <Users size={14} className="text-purple-500" />
-                  <span>{foreignDraftAlertModal.otherDraft.userName || foreignDraftAlertModal.otherDraft.userEmail || 'Outro Avaliador'}</span>
-                </div>
-                {foreignDraftAlertModal.otherDraft.userEmail && (
-                  <div className="text-[11px] opacity-75 pl-5">{foreignDraftAlertModal.otherDraft.userEmail}</div>
-                )}
-                {foreignDraftAlertModal.otherDraft.updatedAtFormatted && (
-                  <div className="text-[11px] opacity-75 pl-5">Última alteração às {foreignDraftAlertModal.otherDraft.updatedAtFormatted}</div>
-                )}
-              </div>
-              <p className={`text-xs mb-6 italic leading-relaxed ${isDark ? 'text-amber-400/90' : 'text-amber-800'}`}>
-                Por integridade e responsabilidade técnica pericial, você não pode continuar ou alterar a vistoria iniciada por outro avaliador. Cada perito retoma apenas seus próprios processos.
-              </p>
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={() => {
-                    const v = foreignDraftAlertModal.vehicle;
-                    setForeignDraftAlertModal(null);
-                    proceedWithNewInspection(v);
-                  }}
-                  className="w-full py-2.5 px-4 bg-[#003B95] hover:bg-blue-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 text-center cursor-pointer"
-                >
-                  Iniciar Minha Própria Vistoria (Novo Processo)
-                </button>
-                <button
-                  onClick={() => setForeignDraftAlertModal(null)}
-                  className={`w-full py-2 px-4 rounded-xl text-xs font-bold uppercase tracking-wider text-center transition-colors cursor-pointer ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-gray-500 hover:bg-gray-100'}`}
-                >
-                  Voltar ao Pátio
                 </button>
               </div>
             </div>

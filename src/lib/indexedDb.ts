@@ -131,10 +131,9 @@ export async function deleteLocalInspection(id: string): Promise<void> {
 }
 
 export interface ActiveInspectionDraft {
-  id: string; // 'current_active_draft' or 'current_active_draft_{userId}'
+  id: string; // 'draft_' + userId
   userId?: string;
   userEmail?: string;
-  userName?: string;
   laudoData: Record<string, unknown>;
   wizPhase: string;
   wizSubPhase: string;
@@ -153,43 +152,25 @@ export interface ActiveInspectionDraft {
   };
 }
 
-export function getDraftStorageKey(userId?: string): string {
-  if (!userId || userId.trim() === '' || userId === 'guest') {
-    return 'current_active_draft';
-  }
-  const safeId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `current_active_draft_${safeId}`;
-}
-
-export function getDraftLocalStorageKey(userId?: string): string {
-  if (!userId || userId.trim() === '' || userId === 'guest') {
-    return 'argos_active_inspection_draft';
-  }
-  const safeId = userId.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `argos_active_inspection_draft_${safeId}`;
-}
-
 export async function saveActiveInspectionDraft(
   draft: Omit<ActiveInspectionDraft, 'id'> & { id?: string },
   userId?: string
 ): Promise<void> {
-  const targetUserId = userId || draft.userId || 'guest';
-  const idbKey = getDraftStorageKey(targetUserId);
-  const lsKey = getDraftLocalStorageKey(targetUserId);
+  const effectiveUserId = userId || draft.userId || 'anonymous';
+  const draftKey = `draft_${effectiveUserId}`;
 
   const completeDraft: ActiveInspectionDraft = {
     ...draft,
-    id: idbKey,
-    userId: targetUserId,
-    userEmail: draft.userEmail || '',
-    userName: draft.userName || '',
+    id: draftKey,
+    userId: effectiveUserId,
     updatedAt: draft.updatedAt || Date.now(),
     updatedAtFormatted: draft.updatedAtFormatted || new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   };
 
-  // 1. Save to localStorage immediately
+  // 1. Save to localStorage immediately (isolated per user)
+  const localKey = `argos_active_inspection_draft_${effectiveUserId}`;
   try {
-    localStorage.setItem(lsKey, JSON.stringify(completeDraft));
+    localStorage.setItem(localKey, JSON.stringify(completeDraft));
   } catch {
     // If quota exceeded (e.g. photos), save without heavy photo data in localStorage fallback
     try {
@@ -201,7 +182,7 @@ export async function saveActiveInspectionDraft(
           motorPhoto: completeDraft.laudoData?.motorPhoto ? '[saved_in_idb]' : null,
         }
       };
-      localStorage.setItem(lsKey, JSON.stringify(lightweight));
+      localStorage.setItem(localKey, JSON.stringify(lightweight));
     } catch (e2) {
       console.warn('[localStorage draft save error]', e2);
     }
@@ -223,40 +204,35 @@ export async function saveActiveInspectionDraft(
 }
 
 export async function getActiveInspectionDraft(userId?: string): Promise<ActiveInspectionDraft | null> {
-  const targetUserId = userId || 'guest';
-  const idbKey = getDraftStorageKey(targetUserId);
-  const lsKey = getDraftLocalStorageKey(targetUserId);
+  if (!userId) {
+    return null;
+  }
+  const draftKey = `draft_${userId}`;
+  const localKey = `argos_active_inspection_draft_${userId}`;
 
-  // 1. Try to load user draft from IndexedDB first
+  // 1. Try to load full draft from IndexedDB first
   try {
     const db = await openDB();
     const draftFromIdb = await new Promise<ActiveInspectionDraft | null>((resolve, reject) => {
       const tx = db.transaction(STORE_DRAFT, 'readonly');
       const store = tx.objectStore(STORE_DRAFT);
-      const req = store.get(idbKey);
+      const req = store.get(draftKey);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
-    if (draftFromIdb && draftFromIdb.laudoData) {
-      // Security check: ensure draft belongs to the requested user
-      if (draftFromIdb.userId && draftFromIdb.userId !== targetUserId) {
-        return null;
-      }
+    if (draftFromIdb && draftFromIdb.laudoData && draftFromIdb.userId === userId) {
       return draftFromIdb;
     }
   } catch (err) {
     console.warn('[IndexedDB draft read fallback to localStorage]:', err);
   }
 
-  // 2. Fallback to user localStorage
+  // 2. Fallback to localStorage for this specific user
   try {
-    const raw = localStorage.getItem(lsKey);
+    const raw = localStorage.getItem(localKey);
     if (raw) {
-      const parsed = JSON.parse(raw) as ActiveInspectionDraft;
-      if (parsed && parsed.laudoData) {
-        if (parsed.userId && parsed.userId !== targetUserId) {
-          return null;
-        }
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.laudoData && (!parsed.userId || parsed.userId === userId)) {
         return parsed;
       }
     }
@@ -264,42 +240,21 @@ export async function getActiveInspectionDraft(userId?: string): Promise<ActiveI
     console.warn('[localStorage draft read error]:', e);
   }
 
-  // 3. Fallback for legacy single-draft (only if no targetUserId specified or legacy belonged to user)
-  if (!userId || userId === 'guest') {
-    try {
-      const legacyRaw = localStorage.getItem('argos_active_inspection_draft');
-      if (legacyRaw) {
-        const parsed = JSON.parse(legacyRaw) as ActiveInspectionDraft;
-        if (parsed && parsed.laudoData) {
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
   return null;
 }
 
 export async function clearActiveInspectionDraft(userId?: string): Promise<void> {
-  const targetUserId = userId || 'guest';
-  const idbKey = getDraftStorageKey(targetUserId);
-  const lsKey = getDraftLocalStorageKey(targetUserId);
+  const effectiveUserId = userId || 'anonymous';
+  const draftKey = `draft_${effectiveUserId}`;
+  const localKey = `argos_active_inspection_draft_${effectiveUserId}`;
 
   // 1. Remove from localStorage
   try {
-    localStorage.removeItem(lsKey);
+    localStorage.removeItem(localKey);
+    // Also clean generic legacy key if any
+    localStorage.removeItem('argos_active_inspection_draft');
   } catch {
     // ignore
-  }
-
-  if (!userId || userId === 'guest') {
-    try {
-      localStorage.removeItem('argos_active_inspection_draft');
-    } catch {
-      // ignore
-    }
   }
 
   // 2. Remove from IndexedDB
@@ -308,45 +263,12 @@ export async function clearActiveInspectionDraft(userId?: string): Promise<void>
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_DRAFT, 'readwrite');
       const store = tx.objectStore(STORE_DRAFT);
-      const req = store.delete(idbKey);
+      const req = store.delete(draftKey);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
   } catch (err) {
     console.warn('[IndexedDB draft clear error]:', err);
-  }
-
-  if (!userId || userId === 'guest') {
-    try {
-      const db = await openDB();
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_DRAFT, 'readwrite');
-        const store = tx.objectStore(STORE_DRAFT);
-        const req = store.delete('current_active_draft');
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      // ignore
-    }
-  }
-}
-
-export async function getAllActiveDrafts(): Promise<ActiveInspectionDraft[]> {
-  try {
-    const db = await openDB();
-    return new Promise<ActiveInspectionDraft[]>((resolve) => {
-      const tx = db.transaction(STORE_DRAFT, 'readonly');
-      const store = tx.objectStore(STORE_DRAFT);
-      const req = store.getAll();
-      req.onsuccess = () => {
-        const list: ActiveInspectionDraft[] = req.result || [];
-        resolve(list.filter(d => Boolean(d && d.laudoData && d.vehicleSummary?.placa)));
-      };
-      req.onerror = () => resolve([]);
-    });
-  } catch {
-    return [];
   }
 }
 

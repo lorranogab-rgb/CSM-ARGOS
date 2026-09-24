@@ -24,7 +24,7 @@ try {
     // Silent catch for sandboxed environments where indexedDB is disabled
   });
 } catch {
-  firestoreDb = getFirestore(app);
+  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 }
 export const db = firestoreDb;
 
