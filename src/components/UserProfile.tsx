@@ -292,7 +292,10 @@ export const UserProfile: React.FC<UserProfileProps> = ({
                <div className="flex flex-col sm:flex-row justify-end pt-6 gap-3">
                   <button 
                     type="button" 
-                    onClick={() => signOut(auth)}
+                    onClick={() => {
+                      try { localStorage.removeItem('csm_local_user'); } catch {}
+                      signOut(auth);
+                    }}
                     className={`flex items-center justify-center space-x-2 px-8 py-3 rounded-xl font-bold uppercase tracking-widest text-sm transition-all focus:ring-4 focus:ring-red-500/50 ${isDark ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'} active:scale-95`}
                   >
                      <span>Sair do Aplicativo</span>
