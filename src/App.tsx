@@ -8,7 +8,14 @@ import { useReactToPrint } from 'react-to-print';
 import JSZip from 'jszip';
 import saveAs from 'file-saver';
 import Cropper from 'react-easy-crop';
-import { matchVehicleWithInspection, findInspectionForVehicle } from './utils/vehicleMatcher';
+import { 
+  matchVehicleWithInspection, 
+  findInspectionForVehicle, 
+  deduplicateVehicles, 
+  deduplicateInspections, 
+  areVehiclesSame, 
+  areInspectionsSame 
+} from './utils/vehicleMatcher';
 import { getCroppedImg } from './lib/cropUtils';
 import { compressImageFile } from './lib/imageCompressor';
 import { 
@@ -43,7 +50,7 @@ import {
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { MOCK_VEHICLES, MOCK_INSPECTIONS } from './data/mockData';
 import { UserManualModal } from './components/UserManualModal';
 import { CameraScannerModal } from './components/CameraScannerModal';
@@ -947,16 +954,54 @@ const formatPercent = (val: any) => {
   return `${num.toFixed(0)}%`;
 };
 
+const getTimestampMillis = (val: any): number => {
+  if (!val) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val.toMillis === 'function') {
+    try {
+      const res = val.toMillis();
+      return typeof res === 'number' && !isNaN(res) ? res : 0;
+    } catch {
+      return 0;
+    }
+  }
+  if (typeof val.toDate === 'function') {
+    try {
+      const d = val.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : 0;
+    } catch {
+      return 0;
+    }
+  }
+  if (val.seconds !== undefined && typeof val.seconds === 'number') {
+    return val.seconds * 1000;
+  }
+  if (val._seconds !== undefined && typeof val._seconds === 'number') {
+    return val._seconds * 1000;
+  }
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    if (!isNaN(parsed)) return parsed;
+    const num = Number(val);
+    if (!isNaN(num)) return num;
+  }
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? 0 : val.getTime();
+  }
+  return 0;
+};
+
 const formatDate = (date: any) => {
   if (!date) return '-';
   try {
-    if (typeof date === 'object' && date.seconds) {
-      return new Date(date.seconds * 1000).toLocaleString('pt-BR');
+    const ms = getTimestampMillis(date);
+    if (ms > 0) {
+      return new Date(ms).toLocaleString('pt-BR');
     }
-    if (date.toDate) return date.toDate().toLocaleString('pt-BR');
-    return new Date(date).toLocaleString('pt-BR');
+    if (typeof date === 'string' && date.trim().length > 0) return date;
+    return '-';
   } catch {
-    return String(date);
+    return '-';
   }
 };
 
@@ -1672,7 +1717,7 @@ const App = () => {
     }
   };
 
-  const fetchInitialData = useCallback(async (uid?: string) => {
+  const fetchInitialData = useCallback(async () => {
     const getDeletedIds = (): string[] => {
       try {
         const raw = localStorage.getItem('argos_deleted_laudo_ids');
@@ -1684,42 +1729,8 @@ const App = () => {
     const deletedIds = getDeletedIds();
     const hasCleared = localStorage.getItem('argos_laudos_cleared') === 'true';
 
-    const currentUid = uid || auth.currentUser?.uid || user?.uid;
-    if (!currentUid) {
-      console.log("No current UID found for fetchInitialData, loading local/mock cache");
-      try {
-        const idbInspections = await getLocalInspections().catch(() => []);
-        const combinedLocal: any[] = [...idbInspections];
-        const localRaw = localStorage.getItem('argos_local_backup_laudos');
-        if (localRaw) {
-          const parsed: any[] = JSON.parse(localRaw);
-          for (const it of parsed) {
-            if (!combinedLocal.some(c => c.id === it.id || (c.placa === it.placa && c.data === it.data))) {
-              combinedLocal.push(it);
-            }
-          }
-        }
-        if (combinedLocal.length > 0) {
-          const filtered = combinedLocal.filter(item => !deletedIds.includes(item.id) && !deletedIds.includes(item.fullData?.id));
-          setInspectedResults(filtered);
-        } else if (!hasCleared && deletedIds.length === 0) {
-          setInspectedResults(MOCK_INSPECTIONS);
-        } else {
-          setInspectedResults([]);
-        }
-      } catch {
-        if (!hasCleared && deletedIds.length === 0) {
-          setInspectedResults(MOCK_INSPECTIONS);
-        } else {
-          setInspectedResults([]);
-        }
-      }
-      setFrota(INITIAL_FROTA);
-      return;
-    }
-    
     try {
-      // 1. Fetch inspections from Firestore
+      // 1. Fetch inspections from Firestore (shared for all users and inspectors)
       const iQuery = query(collection(db, "inspections"));
       const iSnap = await getDocs(iQuery);
       const iData = iSnap.docs
@@ -1768,14 +1779,15 @@ const App = () => {
         iData.push(...MOCK_INSPECTIONS);
       }
 
-      iData.sort((a: any, b: any) => (b.inspectedAt?.toMillis() || (b.inspectedAt?.seconds ? b.inspectedAt.seconds * 1000 : 0)) - (a.inspectedAt?.toMillis() || (a.inspectedAt?.seconds ? a.inspectedAt.seconds * 1000 : 0)));
-      setInspectedResults(iData);
+      // Robust Deduplication for inspections
+      const deduplicatedInspections = deduplicateInspections(iData);
+      deduplicatedInspections.sort((a: any, b: any) => getTimestampMillis(b.inspectedAt) - getTimestampMillis(a.inspectedAt));
+      setInspectedResults(deduplicatedInspections);
 
       // 2. Fetch vehicles from Firestore
       const vQuery = query(collection(db, "vehicles"));
       const vSnap = await getDocs(vQuery);
       const vData = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
-      vData.sort((a: any, b: any) => (b.uploadedAt?.toMillis() || 0) - (a.uploadedAt?.toMillis() || 0));
 
       // Also merge any cached local custom fleet from previous uploads if Firestore has fewer
       try {
@@ -1793,15 +1805,18 @@ const App = () => {
       }
 
       // Also ensure any vehicles present in real completed inspections are recognized in frota
-      for (const insp of iData) {
+      for (const insp of deduplicatedInspections) {
         if (insp.fullData?.vehicle && !vData.some(v => matchVehicleWithInspection(v, insp))) {
           vData.push(insp.fullData.vehicle as Vehicle);
         }
       }
 
-      if (vData.length > 0) {
-        setFrota(vData);
-      } else if (iData.length === 0 && !hasCleared && deletedIds.length === 0) {
+      const deduplicatedVehicles = deduplicateVehicles(vData);
+      deduplicatedVehicles.sort((a: any, b: any) => getTimestampMillis(b.uploadedAt) - getTimestampMillis(a.uploadedAt));
+
+      if (deduplicatedVehicles.length > 0) {
+        setFrota(deduplicatedVehicles);
+      } else if (deduplicatedInspections.length === 0 && !hasCleared && deletedIds.length === 0) {
         // Only load mock if there are zero inspections and no cached fleet
         setFrota(INITIAL_FROTA);
       } else {
@@ -1851,7 +1866,7 @@ const App = () => {
       }
       setFrota(INITIAL_FROTA);
     }
-  }, [user?.uid]);
+  }, []);
 
   const handleForceSync = useCallback(async () => {
     if (!navigator.onLine) {
@@ -1904,6 +1919,133 @@ const App = () => {
       setSyncState(navigator.onLine ? 'saved_locally' : 'offline');
     }
   }, [fetchInitialData]);
+
+  const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
+
+  const handleCleanFirestoreDuplicates = useCallback(async () => {
+    if (isCleaningDuplicates) return;
+    setIsCleaningDuplicates(true);
+    const toastId = toast.loading("Analisando e desduplicando banco de dados...");
+    
+    try {
+      let removedVehiclesCount = 0;
+      let removedInspectionsCount = 0;
+
+      // 1. Process and deduplicate Vehicles in Firestore
+      const vSnap = await getDocs(query(collection(db, "vehicles")));
+      const allVehicles = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
+      
+      const keptVehicles: Vehicle[] = [];
+      const vehicleIdsToDelete: string[] = [];
+
+      for (const veh of allVehicles) {
+        const matchIdx = keptVehicles.findIndex(k => areVehiclesSame(k, veh));
+        if (matchIdx >= 0) {
+          const kept = keptVehicles[matchIdx];
+          keptVehicles[matchIdx] = {
+            ...veh,
+            ...kept,
+            placa: kept.placa || veh.placa || '',
+            chassi: kept.chassi || veh.chassi || '',
+            modelo: (kept.modelo && !kept.modelo.includes('Identificado')) ? kept.modelo : (veh.modelo || kept.modelo || ''),
+            patrimonio: kept.patrimonio || veh.patrimonio || '',
+            renavam: kept.renavam || veh.renavam || '',
+            municipio: kept.municipio || veh.municipio || '',
+            fipe: (kept.fipe && kept.fipe > 0) ? kept.fipe : (veh.fipe || 0),
+          };
+          if (veh.id && veh.id !== kept.id) {
+            vehicleIdsToDelete.push(veh.id);
+          }
+        } else {
+          keptVehicles.push(veh);
+        }
+      }
+
+      if (vehicleIdsToDelete.length > 0) {
+        for (let i = 0; i < vehicleIdsToDelete.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = vehicleIdsToDelete.slice(i, i + 400);
+          for (const docId of chunk) {
+            batch.delete(doc(db, "vehicles", docId));
+          }
+          await batch.commit();
+        }
+        removedVehiclesCount = vehicleIdsToDelete.length;
+      }
+
+      // 2. Process and deduplicate Inspections in Firestore
+      const iSnap = await getDocs(query(collection(db, "inspections")));
+      const allInspections = iSnap.docs.map(d => {
+        const raw = d.data();
+        const full = raw.fullData || raw;
+        const v = full.vehicle || {};
+        return {
+          ...raw,
+          id: d.id,
+          placa: raw.placa || v.placa || full.placa || '',
+          modelo: raw.modelo || v.modelo || full.modelo || '',
+          chassi: raw.chassi || v.chassi || full.chassi || '',
+          patrimonio: raw.patrimonio || v.patrimonio || full.patrimonio || '',
+          renavam: raw.renavam || v.renavam || full.renavam || '',
+          fullData: full
+        } as unknown as Inspection;
+      });
+
+      const keptInspections: Inspection[] = [];
+      const inspectionIdsToDelete: string[] = [];
+
+      for (const insp of allInspections) {
+        const matchIdx = keptInspections.findIndex(k => areInspectionsSame(k, insp));
+        if (matchIdx >= 0) {
+          const kept = keptInspections[matchIdx];
+          const keptTime = getTimestampMillis(kept.inspectedAt || kept.data);
+          const currentTime = getTimestampMillis(insp.inspectedAt || insp.data);
+          
+          if (currentTime > keptTime || (!kept.fullData && insp.fullData)) {
+            if (kept.id && kept.id !== insp.id) {
+              inspectionIdsToDelete.push(kept.id);
+            }
+            keptInspections[matchIdx] = insp;
+          } else {
+            if (insp.id && insp.id !== kept.id) {
+              inspectionIdsToDelete.push(insp.id);
+            }
+          }
+        } else {
+          keptInspections.push(insp);
+        }
+      }
+
+      if (inspectionIdsToDelete.length > 0) {
+        for (let i = 0; i < inspectionIdsToDelete.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = inspectionIdsToDelete.slice(i, i + 400);
+          for (const docId of chunk) {
+            batch.delete(doc(db, "inspections", docId));
+          }
+          await batch.commit();
+        }
+        removedInspectionsCount = inspectionIdsToDelete.length;
+      }
+
+      // 3. Clear local cache duplicates
+      localStorage.removeItem('argos_custom_frota');
+      localStorage.removeItem('argos_local_backup_laudos');
+
+      await fetchInitialData();
+
+      toast.success(
+        `Desduplicação concluída! ${removedVehiclesCount} veículo(s) e ${removedInspectionsCount} laudo(s) duplicados foram unificados.`,
+        { id: toastId, duration: 6000 }
+      );
+    } catch (e: any) {
+      console.error("Erro ao unificar duplicidades:", e);
+      toast.error(`Erro ao desduplicar: ${e.message || 'Falha na operação'}`, { id: toastId });
+    } finally {
+      setIsCleaningDuplicates(false);
+    }
+  }, [fetchInitialData, isCleaningDuplicates]);
+
 
   useEffect(() => {
     const handleOnline = () => {
@@ -2048,6 +2190,52 @@ const App = () => {
   }, [activeTab, saveCurrentDraft]);
 
   useEffect(() => {
+    // Listen to real-time updates for vehicles and inspections so all users have immediate shared access
+    let unsubInspections: (() => void) | null = null;
+    let unsubVehicles: (() => void) | null = null;
+
+    try {
+      unsubInspections = onSnapshot(collection(db, "inspections"), (snap) => {
+        if (!snap.empty) {
+          const remoteInspections: Inspection[] = snap.docs.map(d => {
+            const raw = d.data();
+            const full = raw.fullData || raw;
+            const v = full.vehicle || {};
+            return {
+              ...raw,
+              id: d.id,
+              placa: raw.placa || v.placa || full.placa || '',
+              modelo: raw.modelo || v.modelo || full.modelo || '',
+              chassi: raw.chassi || v.chassi || full.chassi || '',
+              patrimonio: raw.patrimonio || v.patrimonio || full.patrimonio || '',
+              renavam: raw.renavam || v.renavam || full.renavam || '',
+              fullData: full
+            } as unknown as Inspection;
+          });
+          const deduplicated = deduplicateInspections(remoteInspections);
+          deduplicated.sort((a: any, b: any) => 
+            getTimestampMillis(b.inspectedAt) - getTimestampMillis(a.inspectedAt)
+          );
+          setInspectedResults(deduplicated);
+        }
+      }, (err) => {
+        console.warn("Inspections snapshot listener:", err);
+      });
+
+      unsubVehicles = onSnapshot(collection(db, "vehicles"), (snap) => {
+        if (!snap.empty) {
+          const remoteVehicles: Vehicle[] = snap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
+          const deduplicated = deduplicateVehicles(remoteVehicles);
+          deduplicated.sort((a: any, b: any) => getTimestampMillis(b.uploadedAt) - getTimestampMillis(a.uploadedAt));
+          setFrota(deduplicated);
+        }
+      }, (err) => {
+        console.warn("Vehicles snapshot listener:", err);
+      });
+    } catch (e) {
+      console.warn("Real-time listener setup:", e);
+    }
+
     const fallbackTimer = setTimeout(() => {
       setAuthReady(true);
     }, 1500);
@@ -2057,7 +2245,7 @@ const App = () => {
       setUser(u);
       setAuthReady(true);
       if (u) {
-        fetchInitialData(u.uid);
+        fetchInitialData();
         // Carrega estritamente o rascunho em andamento pertencente ao usuário logado
         getActiveInspectionDraft(u.uid).then((draft) => {
           if (draft && draft.laudoData && !draft.viewMode && draft.userId === u.uid) {
@@ -2088,28 +2276,11 @@ const App = () => {
           setActiveDraftInfo(null);
         });
       } else {
+        fetchInitialData();
         setLaudoData(null);
         setActiveDraftInfo(null);
         setLastAutoSaveTime(null);
         setAutoSaveStatus('idle');
-        setFrota(INITIAL_FROTA);
-        try {
-          const deletedRaw = localStorage.getItem('argos_deleted_laudo_ids');
-          const deletedIds: string[] = deletedRaw ? JSON.parse(deletedRaw) : [];
-          const hasCleared = localStorage.getItem('argos_laudos_cleared') === 'true';
-          const localRaw = localStorage.getItem('argos_local_backup_laudos');
-          if (localRaw) {
-            const parsed: any[] = JSON.parse(localRaw);
-            const filtered = parsed.filter(item => !deletedIds.includes(item.id) && !deletedIds.includes(item.fullData?.id));
-            setInspectedResults(filtered);
-          } else if (!hasCleared && deletedIds.length === 0) {
-            setInspectedResults(MOCK_INSPECTIONS);
-          } else {
-            setInspectedResults([]);
-          }
-        } catch {
-          setInspectedResults([]);
-        }
         if (activeTabRef.current !== 'wizard' && activeTabRef.current !== 'mimico') {
           setActiveTab('inicio');
         }
@@ -2123,6 +2294,8 @@ const App = () => {
     return () => {
       clearTimeout(fallbackTimer);
       unsubscribe();
+      if (unsubInspections) unsubInspections();
+      if (unsubVehicles) unsubVehicles();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2137,7 +2310,14 @@ const App = () => {
       const errorMessage = e.message || "";
       const errorStr = String(e);
       
-      if (errorCode === 'auth/network-request-failed') {
+      if (errorCode === 'auth/unauthorized-domain' ||
+          errorMessage.includes('unauthorized-domain') ||
+          errorStr.includes('unauthorized-domain')) {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setAuthError(
+          `Domínio não autorizado no Firebase Auth (${currentHost}). Adicione este domínio em: Firebase Console > Authentication > Settings > Authorized domains.`
+        );
+      } else if (errorCode === 'auth/network-request-failed') {
         setAuthError("Erro de conexão. Verifique sua internet ou se há bloqueadores de anúncios ativos.");
       } else if (errorCode === 'auth/invalid-credential' || 
                  errorMessage.includes('invalid-credential') ||
@@ -3192,7 +3372,7 @@ const App = () => {
                   setFrota(finalSavedList);
                   
                   // Reload initial data
-                  await fetchInitialData(user.uid);
+                  await fetchInitialData();
                   setActiveTab('selecao');
                   toast.success(`${validFrotaRaw.length} veículos da planilha (Aba: ${bestSheetName}) carregados com sucesso!`);
                 } catch (e: any) {
@@ -3975,7 +4155,7 @@ const App = () => {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold font-mono text-blue-500">{h.updatedByEmail}</span>
                     <span className="text-[10px] text-gray-500 font-medium">
-                      {h.updatedAt?.toMillis ? new Date(h.updatedAt.toMillis()).toLocaleString() : 'Recentemente'}
+                      {formatDate(h.updatedAt)}
                     </span>
                   </div>
                   <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
@@ -4210,15 +4390,6 @@ const App = () => {
             )}
 
             <button 
-              onClick={() => setShowUserManualModal(true)} 
-              className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-blue-400 border-slate-700 hover:bg-slate-700 hover:text-blue-300' : 'bg-white text-blue-600 border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}
-              title="Manual do Usuário"
-              aria-label="Manual do Usuário"
-            >
-              <BookOpen size={16} className="text-blue-500 sm:w-[18px] sm:h-[18px]" />
-            </button>
-
-            <button 
               onClick={toggleTheme} 
               className={`w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl cursor-pointer transition-colors border shadow-sm shrink-0 ${isDark ? 'bg-slate-800 text-amber-500 border-slate-700 hover:bg-slate-700' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
               title={isDark ? "Ativar Modo Claro" : "Ativar Modo Escuro"}
@@ -4364,6 +4535,27 @@ const App = () => {
                       <div className="text-left">
                         <p className="font-bold text-sm">Manual do Sistema</p>
                         <p className="text-[10px] opacity-70 uppercase font-semibold">Guia operacional e download PDF</p>
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={handleCleanFirestoreDuplicates}
+                      disabled={isCleaningDuplicates}
+                      className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                        isCleaningDuplicates 
+                          ? 'opacity-70 cursor-wait bg-indigo-500/10 border-indigo-500/20 text-indigo-400' 
+                          : isDark 
+                            ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20' 
+                            : 'bg-indigo-50/70 border-indigo-200 text-indigo-900 hover:bg-indigo-100/70'
+                      }`}
+                      title="Varre e unifica cadastros duplicados de veículos e laudos"
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-indigo-500/20 text-indigo-400' : 'bg-white text-indigo-600'}`}>
+                        <Sparkles size={20} className={isCleaningDuplicates ? 'animate-spin' : ''} />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-bold text-sm">Unificar Duplicidades</p>
+                        <p className="text-[10px] opacity-70 uppercase font-semibold">Desduplicar frota e laudos</p>
                       </div>
                     </button>
                   </div>
@@ -6683,6 +6875,8 @@ const App = () => {
              isDark={isDark} 
              user={user} 
              onOpenTestRunner={() => setShowTestRunnerModal(true)} 
+             onCleanDuplicates={handleCleanFirestoreDuplicates}
+             isCleaningDuplicates={isCleaningDuplicates}
            />
         )}
 

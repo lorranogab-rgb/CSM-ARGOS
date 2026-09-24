@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, FlaskConical, ShieldCheck } from 'lucide-react';
+import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, FlaskConical, ShieldCheck, Sparkles, Database } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { updateProfile, updatePassword, User as FirebaseUser, EmailAuthProvider, reauthenticateWithCredential, reauthenticateWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 
@@ -7,9 +7,17 @@ interface UserProfileProps {
   isDark: boolean;
   user: FirebaseUser | null;
   onOpenTestRunner?: () => void;
+  onCleanDuplicates?: () => void;
+  isCleaningDuplicates?: boolean;
 }
 
-export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTestRunner }) => {
+export const UserProfile: React.FC<UserProfileProps> = ({ 
+  isDark, 
+  user, 
+  onOpenTestRunner, 
+  onCleanDuplicates, 
+  isCleaningDuplicates = false 
+}) => {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -300,6 +308,56 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, onOpenTe
                </div>
             </form>
          </div>
+
+         {/* Ferramenta de Otimização e Desduplicação da Base de Dados */}
+         {onCleanDuplicates && (
+           <div className={`mt-8 p-8 rounded-3xl border shadow-sm transition-all ${
+             isDark 
+               ? 'bg-blue-950/20 border-blue-900/50' 
+               : 'bg-gradient-to-br from-blue-50/70 to-indigo-50/50 border-blue-200'
+           }`}>
+             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+               <div className="flex items-start space-x-4">
+                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0 ${
+                   isDark ? 'bg-blue-900/60 text-blue-300 border border-blue-700/50' : 'bg-[#003B95] text-white'
+                 }`}>
+                   <Sparkles size={26} />
+                 </div>
+                 <div>
+                   <div className="flex items-center gap-2">
+                     <h2 className={`text-xl font-black tracking-tight ${isDark ? 'text-blue-200' : 'text-blue-950'}`}>
+                       Otimização & Desduplicação da Base de Dados
+                     </h2>
+                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                       isDark ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-blue-100 text-blue-700 border border-blue-200'
+                     }`}>
+                       CSM:ARGOS
+                     </span>
+                   </div>
+                   <p className={`text-sm mt-1 font-medium ${isDark ? 'text-blue-300/80' : 'text-blue-800/80'}`}>
+                     Varre as coleções de <strong>Veículos</strong> e <strong>Laudos</strong> na nuvem, cruza placas, chassis e patrimônios para eliminar registros redundantes e unificar cadastros em duplicidade.
+                   </p>
+                 </div>
+               </div>
+
+               <button
+                 type="button"
+                 onClick={onCleanDuplicates}
+                 disabled={isCleaningDuplicates}
+                 className={`w-full md:w-auto px-6 py-3.5 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center space-x-2.5 transition-all shadow-md active:scale-95 ${
+                   isCleaningDuplicates
+                     ? 'opacity-70 cursor-wait bg-blue-500 text-white'
+                     : isDark
+                       ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40'
+                       : 'bg-[#003B95] hover:bg-blue-800 text-white shadow-blue-200'
+                 }`}
+               >
+                 <Sparkles size={18} className={isCleaningDuplicates ? 'animate-spin' : ''} />
+                 <span>{isCleaningDuplicates ? 'Unificando...' : 'Unificar e Remover Duplicatas'}</span>
+               </button>
+             </div>
+           </div>
+         )}
 
          {/* Painel Exclusivo de Administração & QA Suite - Apenas para CBMPR.LEILAO@GMAIL.COM */}
          {isAdmin && (

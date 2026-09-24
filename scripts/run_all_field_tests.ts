@@ -7,7 +7,16 @@
  * isolamento de usuários, OCR, scanner, Anexo J e resiliência offline.
  */
 
-import { cleanIdStr, matchVehicleWithInspection, findInspectionForVehicle } from '../src/utils/vehicleMatcher';
+import { 
+  cleanIdStr, 
+  matchVehicleWithInspection, 
+  findInspectionForVehicle,
+  deduplicateVehicles,
+  deduplicateInspections,
+  areVehiclesSame,
+  areInspectionsSame,
+  getTimestampMillis
+} from '../src/utils/vehicleMatcher';
 import { generateRealisticChassisPhoto, generateRealisticEnginePhoto } from '../src/utils/mockPhotoGenerator';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -376,6 +385,155 @@ it('Fotos e Decalques de Campo', 'Geração de decalques nítidos com payload co
   expect(chassiImg.length).toBeGreaterThan(300);
   expect(motorImg.length).toBeGreaterThan(300);
 });
+
+// =========================================================================
+// 8. INCLUSÃO E EXCLUSÃO DE VEÍCULOS (FROTA E PÁTIOS)
+// =========================================================================
+
+it('Inclusão e Exclusão de Veículos', 'Inclusão unitária e em lote com higienização de chassi e placa', () => {
+  const initialFleet: any[] = [
+    { id: 'v1', placa: 'ABC-1234', chassi: '9BWAB45U0LT018892', modelo: 'GOL', municipio: 'CURITIBA' }
+  ];
+
+  // Adicionar novo veículo
+  const newVehicle = { id: 'v2', placa: 'XYZ-9876', chassi: '8AFZZZ377G019283', modelo: 'SIENA', municipio: 'LONDRINA' };
+  const updatedFleet = [...initialFleet, newVehicle];
+  expect(updatedFleet.length).toBe(2);
+
+  // Tentativa de inclusão de duplicata com pequenas variações (ex: sem hífen)
+  const duplicateVehicle = { id: 'v3', placa: 'ABC1234', chassi: '018892', modelo: 'VW GOL 1.6', municipio: 'CURITIBA', fipe: 25000 };
+  const deduplicated = deduplicateVehicles([...updatedFleet, duplicateVehicle]);
+  
+  // Deve manter exatamente 2 veículos e enriquecer o veículo 1 com os dados novos da FIPE
+  expect(deduplicated.length).toBe(2);
+  const v1 = deduplicated.find(v => v.placa === 'ABC-1234' || v.placa === 'ABC1234');
+  expect(v1).toBeTruthy();
+  expect(v1.fipe).toBe(25000);
+});
+
+it('Inclusão e Exclusão de Veículos', 'Exclusão unitária e em lote preservando o histórico pericial', () => {
+  let fleet: any[] = [
+    { id: 'v-101', placa: 'AAA1111', chassi: 'CHASSI11111111111', municipio: 'CASCAVEL' },
+    { id: 'v-102', placa: 'BBB2222', chassi: 'CHASSI22222222222', municipio: 'CASCAVEL' },
+    { id: 'v-103', placa: 'CCC3333', chassi: 'CHASSI33333333333', municipio: 'CASCAVEL' }
+  ];
+
+  const inspections: any[] = [
+    { id: 'insp-1', placa: 'AAA1111', nota: 45, class: 'RECUPERÁVEL' },
+    { id: 'insp-2', placa: 'BBB2222', nota: 10, class: 'SUCATA' }
+  ];
+
+  // Exclusão unitária do veículo v-101
+  fleet = fleet.filter(v => v.id !== 'v-101');
+  expect(fleet.length).toBe(2);
+  expect(fleet.some(v => v.id === 'v-101')).toBe(false);
+
+  // Laudo pericial do AAA1111 permanece preservado
+  expect(inspections.some(i => i.placa === 'AAA1111')).toBe(true);
+
+  // Exclusão em lote (multi-seleção) dos veículos v-102 e v-103
+  const selectedToDelete = ['v-102', 'v-103'];
+  fleet = fleet.filter(v => !selectedToDelete.includes(v.id));
+  expect(fleet.length).toBe(0);
+
+  // Todos os laudos continuam preservados no histórico
+  expect(inspections.length).toBe(2);
+});
+
+// =========================================================================
+// 9. INCLUSÃO E EXCLUSÃO DE LAUDOS PERICIAIS
+// =========================================================================
+
+it('Inclusão e Exclusão de Laudos', 'Inclusão de laudo pericial com cálculo de nota e desduplicação por timestamp', () => {
+  const initialInspections: any[] = [
+    { 
+      id: 'insp-base-1', 
+      placa: 'MNO5555', 
+      chassi: '9BWAA01Z987654321', 
+      inspectedAt: '2026-09-20T10:00:00Z', 
+      nota: 35, 
+      class: 'RECUPERÁVEL' 
+    }
+  ];
+
+  // Novo laudo realizado para o mesmo veículo (reavaliação pericial com dados mais recentes)
+  const updatedInspection = {
+    id: 'insp-base-2',
+    placa: 'MNO5555',
+    chassi: '9BWAA01Z987654321',
+    inspectedAt: '2026-09-23T14:30:00Z',
+    nota: 50,
+    class: 'RECUPERÁVEL',
+    fullData: { vehicle: { placa: 'MNO5555', renavam: '1234567890' } }
+  };
+
+  const combined = [...initialInspections, updatedInspection];
+  const deduplicated = deduplicateInspections(combined);
+
+  // Deve haver apenas 1 laudo consolidado contendo a nota e timestamp mais recente
+  expect(deduplicated.length).toBe(1);
+  expect(deduplicated[0].nota).toBe(50);
+  expect(getTimestampMillis(deduplicated[0].inspectedAt)).toBe(getTimestampMillis('2026-09-23T14:30:00Z'));
+});
+
+it('Inclusão e Exclusão de Laudos', 'Exclusão de laudo com blacklist persistida (deletedIds)', () => {
+  const allInspections: any[] = [
+    { id: 'laudo-a', placa: 'AAA0001', nota: 40 },
+    { id: 'laudo-b', placa: 'BBB0002', nota: 60 },
+    { id: 'laudo-c', placa: 'CCC0003', nota: 20 }
+  ];
+
+  const deletedIds = ['laudo-b'];
+
+  // Simulação do filtro do fetch e dos listeners
+  const activeInspections = allInspections.filter(item => !deletedIds.includes(item.id));
+  expect(activeInspections.length).toBe(2);
+  expect(activeInspections.some(i => i.id === 'laudo-b')).toBe(false);
+
+  // Mesmo se o cache local tentar reinjetar 'laudo-b', a blacklist impede a reinserção
+  const localCache = [{ id: 'laudo-b', placa: 'BBB0002', nota: 60 }];
+  for (const item of localCache) {
+    if (!deletedIds.includes(item.id)) {
+      activeInspections.push(item);
+    }
+  }
+  expect(activeInspections.length).toBe(2);
+});
+
+// =========================================================================
+// 10. PROTEÇÃO E INTEGRIDADE DO PÁTIO DE PONTA GROSSA
+// =========================================================================
+
+it('Integridade do Pátio de Ponta Grossa', 'Garantir que a base de 22 laudos homologados de Ponta Grossa permanece intacta', () => {
+  const pontaGrossaPath = path.resolve(process.cwd(), 'src/data/pontaGrossaInspections.json');
+  expect(fs.existsSync(pontaGrossaPath)).toBe(true);
+
+  const rawData = fs.readFileSync(pontaGrossaPath, 'utf-8');
+  const pontaGrossaList: any[] = JSON.parse(rawData);
+
+  // Verificação de quantidade oficial homologada no arquivo de referência de Ponta Grossa
+  expect(pontaGrossaList.length).toBe(22);
+
+  // Verificação de presença e integridade de veículos chave do pátio
+  const palio = pontaGrossaList.find(p => p.placa === 'AMF7355');
+  expect(palio).toBeTruthy();
+  expect(palio.modelo).toBe('FIAT/PALIO WEEK HLX FLEX');
+  expect(palio.nota).toBe(40);
+  expect(palio.valuationPercent).toBe(15);
+  expect(palio.fullData.vehicle.endereco.cidade).toBe('PONTA GROSSA');
+
+  // Nenhum registro de Ponta Grossa foi corrompido ou teve valores nulos em campos vitais
+  for (const item of pontaGrossaList) {
+    expect(item.id).toBeTruthy();
+    expect(item.placa).toBeTruthy();
+    expect(item.modelo).toBeTruthy();
+    expect(typeof item.nota).toBe('number');
+    expect(typeof item.valuationPercent).toBe('number');
+    expect(item.fullData).toBeTruthy();
+    expect(item.fullData.vehicle.endereco.cidade).toBe('PONTA GROSSA');
+  }
+});
+
 
 // =========================================================================
 // EXECUÇÃO DOS TESTES

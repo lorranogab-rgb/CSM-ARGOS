@@ -22,19 +22,19 @@ service cloud.firestore {
     }
 
     // 2. Collection Rules
-    // Fleet Vehicles: Read allowed for all inspectors to prevent yard data loss offline/in field.
+    // Fleet Vehicles: Read allowed for all authenticated users/inspectors across all yards.
     // Modifications require authentication.
     match /vehicles/{vehicleId} {
-      allow read: if true;
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(vehicleId);
       allow update: if isSignedIn();
       allow delete: if isSignedIn();
     }
 
-    // Vehicle Inspections: Read allowed for all inspectors to view history and previous day laudos.
+    // Vehicle Inspections: Read allowed for all authenticated users to view history and previous day laudos.
     // Creation and updates require authentication.
     match /inspections/{inspectionId} {
-      allow read: if true;
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(inspectionId);
       allow update: if isSignedIn() && isValidId(inspectionId);
       allow delete: if isSignedIn();

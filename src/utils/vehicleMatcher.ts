@@ -49,7 +49,121 @@ export const matchVehicleWithInspection = (v: any, r: any): boolean => {
   return false;
 };
 
+export const getTimestampMillis = (val: any): number => {
+  if (!val) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (typeof val.toMillis === 'function') {
+    try {
+      const res = val.toMillis();
+      return typeof res === 'number' && !isNaN(res) ? res : 0;
+    } catch {
+      return 0;
+    }
+  }
+  if (typeof val.toDate === 'function') {
+    try {
+      const d = val.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : 0;
+    } catch {
+      return 0;
+    }
+  }
+  if (val.seconds !== undefined && typeof val.seconds === 'number') {
+    return val.seconds * 1000;
+  }
+  if (val._seconds !== undefined && typeof val._seconds === 'number') {
+    return val._seconds * 1000;
+  }
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    if (!isNaN(parsed)) return parsed;
+    const num = Number(val);
+    if (!isNaN(num)) return num;
+  }
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? 0 : val.getTime();
+  }
+  return 0;
+};
+
+export const areVehiclesSame = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  return matchVehicleWithInspection(a, b);
+};
+
+export const areInspectionsSame = (a: any, b: any): boolean => {
+  if (!a || !b) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  return matchVehicleWithInspection(a, b);
+};
+
+/**
+ * Desduplica a lista de veículos de forma determinística preservando dados mais completos.
+ */
+export const deduplicateVehicles = (list: any[]): any[] => {
+  if (!Array.isArray(list)) return [];
+  const result: any[] = [];
+  for (const item of list) {
+    if (!item) continue;
+    const existingIndex = result.findIndex(existing => areVehiclesSame(existing, item));
+    if (existingIndex >= 0) {
+      const existing = result[existingIndex];
+      // Merge properties if current item has better/newer values
+      result[existingIndex] = {
+        ...item,
+        ...existing,
+        id: existing.id || item.id,
+        placa: existing.placa || item.placa || '',
+        chassi: existing.chassi || item.chassi || '',
+        modelo: (existing.modelo && !existing.modelo.includes('Identificado')) ? existing.modelo : (item.modelo || existing.modelo || ''),
+        patrimonio: existing.patrimonio || item.patrimonio || '',
+        renavam: existing.renavam || item.renavam || '',
+        municipio: existing.municipio || item.municipio || '',
+        fileira: existing.fileira && existing.fileira !== '-' ? existing.fileira : (item.fileira || existing.fileira || '-'),
+        posicao: existing.posicao && existing.posicao !== '-' ? existing.posicao : (item.posicao || existing.posicao || '-'),
+        fipe: (existing.fipe && existing.fipe > 0) ? existing.fipe : (item.fipe || 0),
+        uploadedAt: getTimestampMillis(existing.uploadedAt) >= getTimestampMillis(item.uploadedAt) ? existing.uploadedAt : item.uploadedAt
+      };
+    } else {
+      result.push({ ...item });
+    }
+  }
+  return result;
+};
+
+/**
+ * Desduplica a lista de laudos periciais mantendo a versão mais recente/completa.
+ */
+export const deduplicateInspections = (list: any[]): any[] => {
+  if (!Array.isArray(list)) return [];
+  const result: any[] = [];
+  for (const item of list) {
+    if (!item) continue;
+    const existingIndex = result.findIndex(existing => areInspectionsSame(existing, item));
+    if (existingIndex >= 0) {
+      const existing = result[existingIndex];
+      const existingTime = getTimestampMillis(existing.inspectedAt || existing.data);
+      const itemTime = getTimestampMillis(item.inspectedAt || item.data);
+      
+      // Se o novo registro tiver data mais recente ou tiver fullData onde o existente não tem
+      if (itemTime > existingTime || (!existing.fullData && item.fullData)) {
+        result[existingIndex] = {
+          ...item,
+          id: existing.id || item.id
+        };
+      }
+    } else {
+      result.push({ ...item });
+    }
+  }
+  return result;
+};
+
 export const findInspectionForVehicle = (v: any, inspections: any[]): any | undefined => {
   if (!v || !inspections || inspections.length === 0) return undefined;
   return inspections.find(r => matchVehicleWithInspection(v, r));
 };
+
+
+

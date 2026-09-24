@@ -3,7 +3,6 @@ import {
   GoogleAuthProvider, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
   initializeAuth,
   getAuth,
   browserPopupRedirectResolver,
@@ -19,12 +18,13 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 let firestoreDb: Firestore;
 try {
-  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  const dbId = (firebaseConfig as Record<string, unknown>).firestoreDatabaseId as string | undefined;
+  firestoreDb = dbId ? getFirestore(app, dbId) : getFirestore(app);
   enableMultiTabIndexedDbPersistence(firestoreDb).catch(() => {
     // Silent catch for sandboxed environments where indexedDB is disabled
   });
 } catch {
-  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  firestoreDb = getFirestore(app);
 }
 export const db = firestoreDb;
 
@@ -39,9 +39,20 @@ try {
 }
 export const auth = authInstance;
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail };
+let cachedDriveAccessToken: string | null = null;
+
+export const setCachedAccessToken = (token: string | null) => {
+  cachedDriveAccessToken = token;
+};
+
+export const getCachedAccessToken = (): string | null => {
+  return cachedDriveAccessToken;
+};
+
+export { signInWithEmailAndPassword, createUserWithEmailAndPassword };
 
 export enum OperationType {
   CREATE = 'create',
