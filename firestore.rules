@@ -10,6 +10,7 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
+
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'lorranogab@gmail.com' ||
@@ -17,26 +18,38 @@ service cloud.firestore {
         request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2'
       );
     }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128;
     }
 
-    // 2. Collection Rules
-    // Fleet Vehicles: Read allowed for all authenticated users/inspectors across all yards.
-    // Modifications require authentication.
-    match /vehicles/{vehicleId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(vehicleId);
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // 2. Validation Blueprints
+    function isValidVehicle(data) {
+      return data.keys().hasAll(['placa'])
+        && data.placa is string && data.placa.size() <= 128;
     }
 
-    // Vehicle Inspections: Read allowed for all authenticated users to view history and previous day laudos.
-    // Creation and updates require authentication.
+    function isValidInspection(data) {
+      return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData'])
+        && data.placa is string && data.placa.size() <= 128
+        && data.modelo is string && data.modelo.size() <= 512
+        && data.nota is number
+        && data.fullData is map;
+    }
+
+    // 3. Collection Rules
+    match /vehicles/{vehicleId} {
+      allow read: if true;
+      allow create, update, delete: if isSignedIn();
+    }
+
     match /inspections/{inspectionId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(inspectionId);
-      allow update: if isSignedIn() && isValidId(inspectionId);
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
       allow delete: if isSignedIn();
     }
   }

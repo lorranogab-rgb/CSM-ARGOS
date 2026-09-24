@@ -2,10 +2,9 @@
 // Provides asynchronous, high-capacity offline storage with automatic fallback
 
 const DB_NAME = 'argos_offline_db';
-const DB_VERSION = 2;
+const DB_VERSION = 1;
 const STORE_INSPECTIONS = 'inspections';
 const STORE_FLEET = 'fleet';
-const STORE_DRAFT = 'active_draft';
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -23,9 +22,6 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_FLEET)) {
         db.createObjectStore(STORE_FLEET, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORE_DRAFT)) {
-        db.createObjectStore(STORE_DRAFT, { keyPath: 'id' });
       }
     };
 
@@ -130,145 +126,81 @@ export async function deleteLocalInspection(id: string): Promise<void> {
   }
 }
 
-export interface ActiveInspectionDraft {
-  id: string; // 'draft_' + userId
-  userId?: string;
-  userEmail?: string;
-  laudoData: Record<string, unknown>;
-  wizPhase: string;
-  wizSubPhase: string;
-  wizStep: number;
-  activeTab: string;
-  viewMode: boolean;
-  updatedAt: number;
-  updatedAtFormatted: string;
-  vehicleSummary: {
-    placa?: string;
-    modelo?: string;
-    chassi?: string;
-    municipio?: string;
-    ano?: string;
-    patrimonio?: string;
-  };
-}
-
-export async function saveActiveInspectionDraft(
-  draft: Omit<ActiveInspectionDraft, 'id'> & { id?: string },
-  userId?: string
-): Promise<void> {
-  const effectiveUserId = userId || draft.userId || 'anonymous';
-  const draftKey = `draft_${effectiveUserId}`;
-
-  const completeDraft: ActiveInspectionDraft = {
-    ...draft,
-    id: draftKey,
-    userId: effectiveUserId,
-    updatedAt: draft.updatedAt || Date.now(),
-    updatedAtFormatted: draft.updatedAtFormatted || new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  };
-
-  // 1. Save to localStorage immediately (isolated per user)
-  const localKey = `argos_active_inspection_draft_${effectiveUserId}`;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function saveLocalFleet(fleet: Array<any>): Promise<void> {
   try {
-    localStorage.setItem(localKey, JSON.stringify(completeDraft));
-  } catch {
-    // If quota exceeded (e.g. photos), save without heavy photo data in localStorage fallback
-    try {
-      const lightweight = {
-        ...completeDraft,
-        laudoData: {
-          ...completeDraft.laudoData,
-          chassisPhoto: completeDraft.laudoData?.chassisPhoto ? '[saved_in_idb]' : null,
-          motorPhoto: completeDraft.laudoData?.motorPhoto ? '[saved_in_idb]' : null,
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_FLEET, 'readwrite');
+      const store = tx.objectStore(STORE_FLEET);
+      fleet.forEach(item => {
+        if (item.id) {
+          store.put(item);
         }
-      };
-      localStorage.setItem(localKey, JSON.stringify(lightweight));
-    } catch (e2) {
-      console.warn('[localStorage draft save error]', e2);
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('[IndexedDB] Falling back to localStorage for fleet:', err);
+    try {
+      localStorage.setItem('argos_local_backup_fleet', JSON.stringify(fleet));
+    } catch (e) {
+      console.error('[localStorage fallback fleet error]', e);
     }
   }
+}
 
-  // 2. Save full payload to IndexedDB (supports high capacity base64 photos)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getLocalFleet(): Promise<Array<any>> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_FLEET, 'readonly');
+      const store = tx.objectStore(STORE_FLEET);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const results: Array<Record<string, unknown>> = req.result || [];
+        if (results.length === 0) {
+          try {
+            const raw = localStorage.getItem('argos_local_backup_fleet');
+            if (raw) return resolve(JSON.parse(raw));
+          } catch {
+            // ignore
+          }
+        }
+        resolve(results);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('[IndexedDB] Fallback get fleet from localStorage:', err);
+    try {
+      const raw = localStorage.getItem('argos_local_backup_fleet');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+}
+
+export async function clearLocalFleet(): Promise<void> {
   try {
     const db = await openDB();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_DRAFT, 'readwrite');
-      const store = tx.objectStore(STORE_DRAFT);
-      const req = store.put(completeDraft);
+      const tx = db.transaction(STORE_FLEET, 'readwrite');
+      const store = tx.objectStore(STORE_FLEET);
+      const req = store.clear();
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
-  } catch (idbErr) {
-    console.warn('[IndexedDB draft save error]', idbErr);
-  }
-}
-
-export async function getActiveInspectionDraft(userId?: string): Promise<ActiveInspectionDraft | null> {
-  if (!userId) {
-    return null;
-  }
-  const draftKey = `draft_${userId}`;
-  const localKey = `argos_active_inspection_draft_${userId}`;
-
-  // 1. Try to load full draft from IndexedDB first
-  try {
-    const db = await openDB();
-    const draftFromIdb = await new Promise<ActiveInspectionDraft | null>((resolve, reject) => {
-      const tx = db.transaction(STORE_DRAFT, 'readonly');
-      const store = tx.objectStore(STORE_DRAFT);
-      const req = store.get(draftKey);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-    if (draftFromIdb && draftFromIdb.laudoData && draftFromIdb.userId === userId) {
-      return draftFromIdb;
-    }
   } catch (err) {
-    console.warn('[IndexedDB draft read fallback to localStorage]:', err);
+    console.warn('[IndexedDB] Clear fleet error:', err);
   }
-
-  // 2. Fallback to localStorage for this specific user
   try {
-    const raw = localStorage.getItem(localKey);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.laudoData && (!parsed.userId || parsed.userId === userId)) {
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.warn('[localStorage draft read error]:', e);
-  }
-
-  return null;
-}
-
-export async function clearActiveInspectionDraft(userId?: string): Promise<void> {
-  const effectiveUserId = userId || 'anonymous';
-  const draftKey = `draft_${effectiveUserId}`;
-  const localKey = `argos_active_inspection_draft_${effectiveUserId}`;
-
-  // 1. Remove from localStorage
-  try {
-    localStorage.removeItem(localKey);
-    // Also clean generic legacy key if any
-    localStorage.removeItem('argos_active_inspection_draft');
+    localStorage.removeItem('argos_local_backup_fleet');
   } catch {
     // ignore
-  }
-
-  // 2. Remove from IndexedDB
-  try {
-    const db = await openDB();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_DRAFT, 'readwrite');
-      const store = tx.objectStore(STORE_DRAFT);
-      const req = store.delete(draftKey);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  } catch (err) {
-    console.warn('[IndexedDB draft clear error]:', err);
   }
 }
 
