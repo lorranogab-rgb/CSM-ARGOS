@@ -2,44 +2,86 @@
   "entities": {
     "Vehicle": {
       "title": "Vehicle",
-      "description": "Information about a vehicle in the fleet.",
+      "description": "Information about a vehicle in the fleet assigned to a registered yard address.",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "placa": { "type": "string" },
-        "modelo": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128 },
+        "orgao": { "type": "string", "maxLength": 128 },
+        "placa": { "type": "string", "maxLength": 64 },
+        "modelo": { "type": "string", "maxLength": 512 },
+        "tipo": { "type": "string", "maxLength": 128 },
         "fipe": { "type": "number" },
-        "chassi": { "type": "string" },
-        "motor": { "type": "string" },
-        "municipio": { "type": "string" },
-        "cor": { "type": "string" },
-        "ano": { "type": "string" },
-        "patrimonio": { "type": "string" },
+        "chassi": { "type": "string", "maxLength": 128 },
+        "motor": { "type": "string", "maxLength": 128 },
+        "municipio": { "type": "string", "maxLength": 128 },
+        "enderecoPatio": { "type": "string", "maxLength": 512 },
+        "endereco_patio": { "type": "string", "maxLength": 512 },
+        "cor": { "type": "string", "maxLength": 128 },
+        "ano": { "type": "string", "maxLength": 64 },
+        "comb": { "type": "string", "maxLength": 64 },
+        "origem": { "type": "string", "maxLength": 128 },
+        "renavam": { "type": "string", "maxLength": 64 },
+        "situacaoDetran": { "type": "string", "maxLength": 256 },
+        "patrimonio": { "type": "string", "maxLength": 128 },
+        "fileira": { "type": "string", "maxLength": 64 },
+        "posicao": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 5000 },
         "uploadedAt": { "type": "string", "format": "date-time" },
-        "uploadedBy": { "type": "string" }
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "uploadedByEmail": { "type": "string", "maxLength": 256 }
       },
-      "required": ["placa", "modelo", "chassi"]
+      "required": ["placa"]
     },
     "Inspection": {
       "title": "Inspection",
       "description": "Technical inspection (laudo) results for a vehicle.",
       "type": "object",
       "properties": {
-        "id": { "type": "number" },
-        "data": { "type": "string" },
-        "classification": { "type": "string" },
-        "vehicle": { "type": "object" },
-        "agency": { "type": "object" },
-        "scores": { "type": "object" },
-        "checklist": { "type": "object" },
-        "diagnostics": { "type": "object" },
-        "description": { "type": "string" },
-        "chassisPhoto": { "type": "string" },
-        "motorPhoto": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128 },
+        "placa": { "type": "string", "maxLength": 64 },
+        "modelo": { "type": "string", "maxLength": 512 },
+        "data": { "type": "string", "maxLength": 64 },
+        "class": { "type": "string", "maxLength": 64 },
+        "valuationPercent": { "type": "number" },
+        "hasImpediment": { "type": "boolean" },
+        "impedimentCount": { "type": "number" },
+        "impediments": { "type": "array" },
+        "fullData": { "type": "object" },
         "nota": { "type": "number" },
-        "inspectedBy": { "type": "string" },
-        "inspectedAt": { "type": "string", "format": "date-time" }
-      }
+        "inspectedBy": { "type": "string", "maxLength": 128 },
+        "inspectedByEmail": { "type": "string", "maxLength": 256 },
+        "inspectedAt": { "type": "string", "format": "date-time" },
+        "history": { "type": "array" }
+      },
+      "required": ["placa", "modelo", "nota", "class", "data", "fullData"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System user account with role-based access control and registered yard address permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 256 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "role": { "type": "string", "enum": ["admin", "vistoriador", "visualizador"] },
+        "status": { "type": "string", "enum": ["active", "inactive", "pending"] },
+        "allowedPatios": {
+          "type": "array",
+          "description": "Array of registered system yard addresses (e.g., 'CCT - Ponta Grossa', 'Patio Cachoeira - 6 BBM') or ['TODOS'] for global access."
+        },
+        "cargo": { "type": "string", "maxLength": 256 },
+        "postoGrad": { "type": "string", "maxLength": 128 },
+        "matricula": { "type": "string", "maxLength": 64 },
+        "telefone": { "type": "string", "maxLength": 64 },
+        "lotacao": { "type": "string", "maxLength": 256 },
+        "preRegId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "status"]
     }
   },
   "firestore": {
@@ -50,6 +92,10 @@
     "/inspections/{inspectionId}": {
       "schema": "Inspection",
       "description": "Vehicle inspections collection."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "System users collection with RBAC roles and registered yard restrictions."
     }
   }
 }

@@ -13,8 +13,6 @@ import {
   findInspectionForVehicle,
   deduplicateVehicles,
   deduplicateInspections,
-  areVehiclesSame,
-  areInspectionsSame,
   getTimestampMillis
 } from '../src/utils/vehicleMatcher';
 import { generateRealisticChassisPhoto, generateRealisticEnginePhoto } from '../src/utils/mockPhotoGenerator';

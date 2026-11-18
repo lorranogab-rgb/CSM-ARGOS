@@ -22,7 +22,10 @@ export interface Vehicle {
   precoMinimo?: number | string; // PREÇO MÍNIMO
   situacaoDetran?: string; // SITUAÇÃO DETRAN
   enderecoPatio?: string; // ENDEREÇO DO PÁTIO
+  endereco_patio?: string;
   municipio: string; // MUNICÍPIO
+  fileira?: string;
+  posicao?: string;
   notes?: string; // NOTAS DO VEÍCULO
   uploadedAt?: { toMillis: () => number } | null; // Firestore Timestamp
   uploadedBy?: string;
@@ -65,3 +68,31 @@ export interface Inspection {
   history?: InspectionHistory[];
   [key: string]: any;
 }
+
+export interface SystemUser {
+  id: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  role: 'admin' | 'vistoriador' | 'visualizador';
+  status: 'active' | 'inactive' | 'pending';
+  cargo?: string;
+  postoGrad?: string;
+  matricula?: string;
+  telefone?: string;
+  lotacao?: string;
+  allowedPatios?: string[]; // Lista de pátios autorizados (ex: ['ARAUCÁRIA'] ou ['TODOS'])
+  inspectionsCount?: number;
+  vehiclesCount?: number;
+  samplePlacas?: string[];
+  createdAt?: any;
+  updatedAt?: any;
+  lastLogin?: any;
+  requestedAt?: any;
+  approvedAt?: any;
+  approvedBy?: string;
+  rejectionReason?: string;
+  preRegId?: string;
+}
+

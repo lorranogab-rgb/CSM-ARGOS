@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock } from 'lucide-react';
+import { User, Key, Mail, Camera, Save, AlertCircle, CheckCircle, Unlock, ShieldCheck, Users, ChevronRight, MapPin } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { updateProfile, updatePassword, User as FirebaseUser, EmailAuthProvider, reauthenticateWithCredential, reauthenticateWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { SystemUser } from '../types';
 
 interface UserProfileProps {
   isDark: boolean;
   user: FirebaseUser | null;
+  systemUserProfile?: SystemUser | null;
+  isAdmin?: boolean;
+  onNavigateToUsers?: () => void;
 }
 
-export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user }) => {
+export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user, systemUserProfile, isAdmin, onNavigateToUsers }) => {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -115,7 +119,7 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user }) => {
 
   return (
       <div className="max-w-4xl mx-auto py-8 px-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-         <header className="mb-10 flex flex-col gap-2">
+         <header className="mb-8 flex flex-col gap-2">
             <h1 className={`text-4xl font-black tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
               Meu Perfil
             </h1>
@@ -123,6 +127,107 @@ export const UserProfile: React.FC<UserProfileProps> = ({ isDark, user }) => {
               Gerencie suas informações de conta e segurança
             </p>
          </header>
+
+         {isAdmin && (
+           <div className={`mb-8 p-6 rounded-3xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm transition-all ${isDark ? 'bg-gradient-to-r from-purple-950/40 to-slate-900 border-purple-800/60' : 'bg-gradient-to-r from-purple-50 to-indigo-50/50 border-purple-200'}`}>
+             <div className="flex items-center gap-4">
+               <div className="w-12 h-12 rounded-2xl bg-purple-600 text-white flex items-center justify-center shadow-lg shadow-purple-600/30 shrink-0">
+                 <ShieldCheck size={24} />
+               </div>
+               <div>
+                 <div className="flex items-center gap-2">
+                   <h3 className={`text-base font-black ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                     Painel Administrativo Ativo
+                   </h3>
+                   <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 border border-purple-500/30">
+                     Acesso Master
+                   </span>
+                 </div>
+                 <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                   Você tem permissão para visualizar, cadastrar, editar e gerenciar todos os operadores do CSM:ARGOS.
+                 </p>
+               </div>
+             </div>
+
+             {onNavigateToUsers && (
+               <button
+                 type="button"
+                 onClick={onNavigateToUsers}
+                 className="flex items-center gap-2 px-5 py-3 rounded-xl font-bold uppercase tracking-wider text-xs bg-purple-600 hover:bg-purple-700 text-white shadow-md shadow-purple-600/20 active:scale-95 transition-all shrink-0 cursor-pointer"
+               >
+                 <Users size={16} />
+                 <span>Gerenciar Usuários</span>
+                 <ChevronRight size={16} />
+               </button>
+             )}
+           </div>
+         )}
+
+         {/* Informações de Abrangência e Pátios Autorizados */}
+         {(() => {
+           const hasGlobalAccess = Boolean(
+             isAdmin ||
+             !systemUserProfile?.allowedPatios ||
+             systemUserProfile.allowedPatios.length === 0 ||
+             systemUserProfile.allowedPatios.includes('TODOS')
+           );
+           const effectiveRole = isAdmin ? 'admin' : (systemUserProfile?.role || 'vistoriador');
+           const roleLabel = effectiveRole === 'admin'
+             ? 'Administrador'
+             : effectiveRole === 'visualizador'
+               ? 'Visualizador (Somente Consulta)'
+               : 'Vistoriador / Avaliador';
+
+           return (
+             <div className={`mb-8 p-6 rounded-3xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm transition-all ${isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-gray-200'}`}>
+               <div className="flex items-center gap-4">
+                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${isDark ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                   <MapPin size={24} />
+                 </div>
+                 <div>
+                   <div className="flex flex-wrap items-center gap-2">
+                     <h3 className={`text-base font-black ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                       Permissão Territorial e Categoria
+                     </h3>
+                     <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                       {roleLabel}
+                     </span>
+                     {hasGlobalAccess ? (
+                       <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-600 dark:text-purple-300 border border-purple-500/30">
+                         Acesso Global
+                       </span>
+                     ) : (
+                       <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                         Restrito ({systemUserProfile?.allowedPatios?.length || 0} pátio{(systemUserProfile?.allowedPatios?.length || 0) > 1 ? 's' : ''})
+                       </span>
+                     )}
+                   </div>
+                   <p className={`text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
+                     {hasGlobalAccess
+                       ? 'Seu perfil possui autorização irrestrita para visualizar e operar em todos os pátios cadastrados no sistema.'
+                       : effectiveRole === 'visualizador'
+                         ? `Seu usuário possui acesso somente leitura (consulta e exportação) restrito ao(s) pátio(s): ${systemUserProfile?.allowedPatios?.join(', ')}.`
+                         : `Seu usuário só pode visualizar, editar, cadastrar laudos e realizar operações no(s) seguinte(s) pátio(s): ${systemUserProfile?.allowedPatios?.join(', ')}.`}
+                   </p>
+                 </div>
+               </div>
+
+               <div className="flex flex-wrap gap-1.5 shrink-0">
+                 {hasGlobalAccess ? (
+                   <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                     Todos os Pátios Cadastrados
+                   </span>
+                 ) : (
+                   systemUserProfile?.allowedPatios?.map(p => (
+                     <span key={p} className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 shadow-sm">
+                       {p}
+                     </span>
+                   ))
+                 )}
+               </div>
+             </div>
+           );
+         })()}
 
          <div className={`p-8 rounded-3xl border ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-gray-200'} shadow-sm`}>
             {message && (

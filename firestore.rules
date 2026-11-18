@@ -11,46 +11,223 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'lorranogab@gmail.com' ||
-        request.auth.token.email == 'cbmpr.leilao@gmail.com' ||
-        request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2'
-      );
+    function hasVerifiedEmail() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
     }
 
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128;
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdminMaster() {
+      return isSignedIn() && (
+        request.auth.uid == 'ohL34Vl1pFRAWcNXbc91EF2V0hP2' ||
+        (hasVerifiedEmail() && request.auth.token.email.lower() in ['cbmpr.leilao@gmail.com', 'lorranogab@gmail.com'])
+      );
+    }
+
+    function userDocPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(userDocPath(request.auth.uid));
+    }
+
+    function userData() {
+      return get(userDocPath(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return hasUserDoc() && userData().status == 'active';
+    }
+
+    function canWriteFleet() {
+      return isAdminMaster() || (
+        isSignedIn()
+        && isActiveUser()
+        && userData().role in ['admin', 'vistoriador']
+        && ('allowedPatios' in userData())
+        && userData().allowedPatios is list
+        && userData().allowedPatios.size() >= 1
+      );
+    }
 
     // 2. Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role', 'status'])
+        && data.keys().size() <= 30
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
+        && data.role in ['admin', 'vistoriador', 'visualizador']
+        && data.status in ['active', 'inactive', 'pending']
+        && (!('uid' in data) || (data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128))
+        && (!('id' in data) || (data.id is string && data.id.size() >= 1 && data.id.size() <= 128))
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('cargo' in data) || (data.cargo is string && data.cargo.size() <= 256))
+        && (!('postoGrad' in data) || (data.postoGrad is string && data.postoGrad.size() <= 128))
+        && (!('matricula' in data) || (data.matricula is string && data.matricula.size() <= 64))
+        && (!('telefone' in data) || (data.telefone is string && data.telefone.size() <= 64))
+        && (!('lotacao' in data) || (data.lotacao is string && data.lotacao.size() <= 256))
+        && (!('preRegId' in data) || (data.preRegId is string && data.preRegId.size() <= 128))
+        && (!('allowedPatios' in data) || (
+          data.allowedPatios is list
+          && data.allowedPatios.size() <= 50
+          && (data.allowedPatios.size() == 0 || data.allowedPatios[0] is string)
+        ));
+    }
+
+    function isValidPreRegistrationClaim(data) {
+      return hasVerifiedEmail()
+        && ('preRegId' in data)
+        && isValidId(data.preRegId)
+        && exists(/databases/$(database)/documents/users/$(data.preRegId))
+        && get(/databases/$(database)/documents/users/$(data.preRegId)).data.email == request.auth.token.email.lower()
+        && data.role == get(/databases/$(database)/documents/users/$(data.preRegId)).data.role
+        && data.status == get(/databases/$(database)/documents/users/$(data.preRegId)).data.status
+        && data.get('allowedPatios', []) == get(/databases/$(database)/documents/users/$(data.preRegId)).data.get('allowedPatios', []);
+    }
+
     function isValidVehicle(data) {
       return data.keys().hasAll(['placa'])
-        && data.placa is string && data.placa.size() <= 128;
+        && data.keys().hasOnly([
+          'id', '_ord', 'orgao', 'placa', 'modelo', 'tipo', 'avaliacao',
+          'chassi', 'motor', 'ano', 'comb', 'patrimonio', 'cor', 'origem',
+          'renavam', 'fipe', 'pctFipe', 'precoMinimo', 'situacaoDetran',
+          'enderecoPatio', 'endereco_patio', 'municipio', 'fileira', 'posicao',
+          'notes', 'uploadedAt', 'uploadedBy', 'uploadedByEmail', 'endereco',
+          'createdAt', 'updatedAt'
+        ])
+        && data.placa is string && data.placa.size() <= 64
+        && (!('modelo' in data) || (data.modelo is string && data.modelo.size() <= 512))
+        && (!('chassi' in data) || (data.chassi is string && data.chassi.size() <= 128))
+        && (!('motor' in data) || (data.motor is string && data.motor.size() <= 128))
+        && (!('municipio' in data) || (data.municipio is string && data.municipio.size() <= 128))
+        && (!('enderecoPatio' in data) || (data.enderecoPatio is string && data.enderecoPatio.size() <= 512))
+        && (!('endereco_patio' in data) || (data.endereco_patio is string && data.endereco_patio.size() <= 512))
+        && (!('fileira' in data) || (data.fileira is string && data.fileira.size() <= 64))
+        && (!('posicao' in data) || (data.posicao is string && data.posicao.size() <= 64))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 5000))
+        && (!('uploadedBy' in data) || (data.uploadedBy is string && data.uploadedBy.size() <= 128))
+        && (!('uploadedByEmail' in data) || (data.uploadedByEmail is string && data.uploadedByEmail.size() <= 256));
     }
 
     function isValidInspection(data) {
       return data.keys().hasAll(['placa', 'modelo', 'nota', 'class', 'data', 'fullData'])
-        && data.placa is string && data.placa.size() <= 128
+        && data.keys().hasOnly([
+          'id', 'placa', 'modelo', 'nota', 'class', 'valuationPercent',
+          'hasImpediment', 'impedimentCount', 'impediments', 'data',
+          'fullData', 'items', 'inspectedAt', 'inspectedBy', 'inspectedByEmail',
+          'updatedAt', 'inspectorEmail', 'status', 'reviewedBy', 'reviewedAt',
+          'reviewNotes', 'history', 'chassisPhoto', 'motorPhoto', 'vehicle',
+          'agency', 'scores', 'checklist', 'diagnostics', 'description'
+        ])
+        && data.placa is string && data.placa.size() <= 64
         && data.modelo is string && data.modelo.size() <= 512
-        && data.nota is number
-        && data.fullData is map;
+        && data.nota is number && data.nota >= 0 && data.nota <= 1000
+        && data.class is string && data.class.size() <= 64
+        && data.data is string && data.data.size() <= 64
+        && data.fullData is map
+        && (!('inspectedBy' in data) || (data.inspectedBy is string && data.inspectedBy.size() <= 128))
+        && (!('inspectedByEmail' in data) || (data.inspectedByEmail is string && data.inspectedByEmail.size() <= 256))
+        && (!('history' in data) || (data.history is list && data.history.size() <= 200));
     }
 
     // 3. Collection Rules
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (
+        isAdminMaster() ||
+        (isSignedIn() && request.auth.uid == userId) ||
+        (hasVerifiedEmail() && resource != null && existing().email == request.auth.token.email.lower())
+      );
+
+      allow list: if isAdminMaster();
+
+      allow create: if isValidId(userId) && isValidUser(incoming()) && (
+        isAdminMaster() ||
+        (
+          isSignedIn()
+          && request.auth.token.email is string
+          && request.auth.uid == userId
+          && incoming().email == request.auth.token.email.lower()
+          && (
+            (incoming().role == 'visualizador' && incoming().status == 'pending' && incoming().get('allowedPatios', []).size() == 0)
+            || isValidPreRegistrationClaim(incoming())
+          )
+        )
+      );
+
+      allow update: if isValidId(userId) && isValidUser(incoming()) && (
+        isAdminMaster() ||
+        (
+          isSignedIn()
+          && request.auth.uid == userId
+          && incoming().email == existing().email
+          && incoming().role == existing().role
+          && incoming().status == existing().status
+          && incoming().get('allowedPatios', []) == existing().get('allowedPatios', [])
+          && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'lastLogin', 'updatedAt'])
+        )
+      );
+
+      allow delete: if isValidId(userId) && isAdminMaster();
+    }
+
     match /vehicles/{vehicleId} {
-      allow read: if true;
-      allow create, update, delete: if isSignedIn();
+      allow get: if isValidId(vehicleId) && (isAdminMaster() || isActiveUser());
+      allow list: if isAdminMaster() || isActiveUser();
+
+      allow create: if isValidId(vehicleId)
+        && isValidVehicle(incoming())
+        && canWriteFleet();
+
+      allow update: if isValidId(vehicleId)
+        && isValidVehicle(incoming())
+        && (
+          isAdminMaster() ||
+          (
+            canWriteFleet() && (
+              // Action: Yard Slot Position Update
+              incoming().diff(existing()).affectedKeys().hasOnly(['fileira']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['posicao']) ||
+              // Action: Vehicle Notes Update
+              incoming().diff(existing()).affectedKeys().hasOnly(['notes']) ||
+              // Action: Inspection Vehicle Sync Update
+              !incoming().diff(existing()).affectedKeys().hasAny(['uploadedAt', 'uploadedBy', 'uploadedByEmail'])
+            )
+          )
+        );
+
+      allow delete: if isValidId(vehicleId) && canWriteFleet();
     }
 
     match /inspections/{inspectionId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
+      allow get: if isValidId(inspectionId) && (isAdminMaster() || isActiveUser());
+      allow list: if isAdminMaster() || isActiveUser();
+
+      allow create: if isValidId(inspectionId)
+        && isValidInspection(incoming())
+        && canWriteFleet();
+
+      allow update: if isValidId(inspectionId)
+        && isValidInspection(incoming())
+        && canWriteFleet();
+
+      allow delete: if isValidId(inspectionId) && canWriteFleet();
     }
   }
 }

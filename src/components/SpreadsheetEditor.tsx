@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Plus, Trash2, Save, UploadCloud, Download, Search, Filter, RefreshCw, Layers, CheckCircle2, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { toast } from 'sonner';
+import {
+  deduplicateVehicles,
+  getCanonicalYardIdentity,
+  getVehicleFingerprintKeys,
+} from '../utils/deduplication';
 
 export interface Vehicle {
   id: string;
@@ -57,8 +63,8 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const createEmptyRow = (): Vehicle => ({
-    id: 'new-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+  const createEmptyRow = (customId?: string): Vehicle => ({
+    id: customId || 'new-initial-row',
     orgao: 'CBMPR',
     placa: '',
     modelo: '',
@@ -83,9 +89,9 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
     posicao: ''
   });
 
-  const normalizeVehicle = (v: Vehicle): Vehicle => ({
+  const normalizeVehicle = (v: Vehicle, index: number): Vehicle => ({
     ...v,
-    id: v.id || ('veh-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)),
+    id: v.id || `veh-row-${index}`,
     orgao: v.orgao || 'CBMPR',
     placa: v.placa || '',
     modelo: v.modelo || '',
@@ -109,44 +115,40 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
     posicao: v.posicao || ''
   });
 
-  // Load from frota initial state
-  const [data, setData] = useState<Vehicle[]>(() => {
-    if (frota && frota.length > 0) {
-      return frota.map(normalizeVehicle);
-    }
-    return [createEmptyRow()];
-  });
-
-  const [isDirty, setIsDirty] = useState(false);
+  const [draftData, setDraftData] = useState<Vehicle[] | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCity, setSelectedCity] = useState('TODOS');
   const [isSaving, setIsSaving] = useState(false);
-  const prevFrotaCountRef = useRef(frota?.length || 0);
 
-  // Synchronize when frota updates (e.g. from async fetch or upload) if user hasn't made unsaved manual edits
-  useEffect(() => {
-    if (!isDirty && frota && frota.length !== prevFrotaCountRef.current) {
-      prevFrotaCountRef.current = frota.length;
-      setData(frota.map(normalizeVehicle));
+  const isDirty = draftData !== null;
+
+  // Derived data always stays in sync with frota until the user makes manual edits
+  const data = useMemo<Vehicle[]>(() => {
+    if (draftData !== null) return draftData;
+    if (frota && frota.length > 0) {
+      return frota.map((v, idx) => normalizeVehicle(v, idx));
     }
-  }, [frota, isDirty]);
+    return [createEmptyRow('new-initial-row')];
+  }, [draftData, frota]);
 
-  // Unique list of cities/yards for filtering
+  // Unique list of canonical yards for filtering
   const availableCities = useMemo(() => {
-    const set = new Set<string>();
+    const byKey = new Map<string, string>();
     data.forEach(v => {
-      if (v.municipio && v.municipio.trim()) {
-        set.add(v.municipio.trim().toUpperCase());
+      const { key, displayName } = getCanonicalYardIdentity(v.municipio, v.enderecoPatio || v.endereco_patio);
+      if (key && key !== 'NAO INFORMADO' && !byKey.has(key)) {
+        byKey.set(key, displayName);
       }
     });
-    return Array.from(set).sort();
+    return Array.from(byKey.entries()).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
   }, [data]);
 
   // Filtered rows for display
   const filteredData = useMemo(() => {
     return data.filter(row => {
-      if (selectedCity !== 'TODOS' && String(row.municipio || '').toUpperCase() !== selectedCity) {
-        return false;
+      if (selectedCity !== 'TODOS') {
+        const rowKey = getCanonicalYardIdentity(row.municipio, row.enderecoPatio || row.endereco_patio).key;
+        if (rowKey !== selectedCity) return false;
       }
       if (!searchTerm.trim()) return true;
       const term = searchTerm.toLowerCase();
@@ -162,32 +164,24 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
   }, [data, searchTerm, selectedCity]);
 
   const handleAddRow = () => {
-    const newRow = createEmptyRow();
+    const newRow = createEmptyRow('new-' + Date.now() + '-' + Math.floor(Math.random() * 1000));
     if (selectedCity !== 'TODOS') {
-      newRow.municipio = selectedCity;
+      const matched = availableCities.find(([k]) => k === selectedCity);
+      newRow.municipio = matched ? matched[1] : selectedCity;
     }
-    setData(prev => [newRow, ...prev]);
-    setIsDirty(true);
+    setDraftData(prev => [newRow, ...(prev ?? data)]);
   };
 
   const handleRemoveRow = (id: string) => {
-    setData(prev => prev.filter(v => v.id !== id));
-    setIsDirty(true);
+    setDraftData(prev => (prev ?? data).filter(v => v.id !== id));
   };
 
   const handleResetToFleet = () => {
-    if (frota && frota.length > 0) {
-      setData(frota.map(normalizeVehicle));
-      setIsDirty(false);
-    } else {
-      setData([createEmptyRow()]);
-      setIsDirty(false);
-    }
+    setDraftData(null);
   };
 
   const handleChange = (id: string, field: keyof Vehicle, value: string) => {
-    setIsDirty(true);
-    setData(prev => prev.map(v => {
+    setDraftData(prev => (prev ?? data).map(v => {
       if (v.id === id) {
         let formattedValue: any = value;
         if (field === 'placa') {
@@ -298,8 +292,11 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
           })).filter(v => v.placa || v.chassi || v.modelo || v.patrimonio);
 
           if (importedVehicles.length > 0) {
-            setData(importedVehicles);
-            setIsDirty(true);
+            const { uniqueVehicles, removedCount } = deduplicateVehicles(importedVehicles as any);
+            setDraftData(uniqueVehicles as Vehicle[]);
+            if (removedCount > 0) {
+              toast.info(`${removedCount} linha(s) duplicada(s) na planilha foram bloqueadas automaticamente.`);
+            }
           }
         }
       } catch (err) {
@@ -360,7 +357,29 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
     });
 
     if (validRows.length === 0) {
-      alert("Nenhum veículo com dados válidos (Placa, Chassi, Modelo ou Patrimônio) para salvar.");
+      toast.error("Nenhum veículo com dados válidos (Placa, Chassi, Modelo ou Patrimônio) para salvar.");
+      return;
+    }
+
+    // Bloqueia duplicidade de identificação (Placa, Chassi, Renavam ou Patrimônio) dentro da própria planilha
+    const seenKeys = new Map<string, string>();
+    const duplicatesFound: string[] = [];
+    for (const row of validRows) {
+      const keys = getVehicleFingerprintKeys(row as any);
+      for (const k of keys) {
+        if (seenKeys.has(k)) {
+          const label = row.placa || row.chassi || row.patrimonio || row.renavam || k;
+          if (!duplicatesFound.includes(label)) {
+            duplicatesFound.push(label);
+          }
+        } else {
+          seenKeys.set(k, row.id);
+        }
+      }
+    }
+
+    if (duplicatesFound.length > 0) {
+      toast.error(`Duplicidade bloqueada na planilha: os veículos (${duplicatesFound.slice(0, 5).join(', ')}) estão repetidos. Remova ou corrija as linhas duplicadas antes de salvar.`);
       return;
     }
 
@@ -368,7 +387,7 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
     try {
       const result = await onSave(validRows);
       if (result !== false) {
-        setIsDirty(false);
+        setDraftData(null);
       }
     } finally {
       setIsSaving(false);
@@ -495,8 +514,8 @@ export const SpreadsheetEditor: React.FC<SpreadsheetEditorProps> = ({
               className="bg-transparent border-none outline-none text-xs font-black uppercase tracking-wider cursor-pointer pr-1"
             >
               <option value="TODOS">Todos os Pátios ({availableCities.length})</option>
-              {availableCities.map(city => (
-                <option key={city} value={city}>{city}</option>
+              {availableCities.map(([cityKey, cityLabel]) => (
+                <option key={cityKey} value={cityKey}>{cityLabel}</option>
               ))}
             </select>
           </div>

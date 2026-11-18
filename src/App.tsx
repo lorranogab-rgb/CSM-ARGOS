@@ -14,6 +14,7 @@ import { saveLocalInspection, getLocalInspections, deleteLocalInspection, saveLo
 import { LoadingArgos } from './components/LoadingArgos';
 import { SpreadsheetEditor } from './components/SpreadsheetEditor';
 import { UserProfile } from './components/UserProfile';
+import { UserManagement } from './components/UserManagement';
 import { 
   Car, LayoutDashboard, Database, Trash2, FileText, 
   RotateCw, 
@@ -25,7 +26,7 @@ import {
   Disc, Armchair, Tag, AlertTriangle, AlertCircle, ArrowUpDown, Table, Check,
   X, BarChart2, LayoutGrid, QrCode, Clock, Bike, History, Map as MapIcon, MapPin,
   Truck, Bus, Anchor, Plane, Hash, Calendar, Info, Filter, CarFront, Download, Smartphone,
-  Coins as CoinsIcon, Sparkles, BookOpen
+  Coins as CoinsIcon, Sparkles, BookOpen, LogOut
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -34,7 +35,24 @@ import {
 import { Toaster, toast } from 'sonner';
 import { auth, db, googleProvider, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword } from './lib/firebase';
 import { signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
-import { collection, addDoc, query, getDocs, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, query, getDocs, getDoc, setDoc, serverTimestamp, doc, updateDoc, deleteDoc, writeBatch, arrayUnion, onSnapshot } from 'firebase/firestore';
+import { SystemUser } from './types';
+import {
+  isUserRestrictedByPatio,
+  getUserAllowedPatios,
+  isUserAllowedForVehicle,
+  getRegisteredYardAddresses,
+  canonicalizeRegisteredYardAddress
+} from './utils/patioPermissions';
+import {
+  deduplicateVehicles,
+  deduplicateInspections,
+  getCanonicalYardIdentity,
+  getDeterministicVehicleDocId,
+  getVehicleFingerprintKeys,
+  isMockVehicleRecord,
+  normalizeVehicleToken
+} from './utils/deduplication';
 import { MOCK_VEHICLES, MOCK_INSPECTIONS } from './data/mockData';
 import { UserManualModal } from './components/UserManualModal';
 
@@ -438,15 +456,20 @@ interface DigitalIdModalProps {
   isDark: boolean;
   onClose: () => void;
   onUpdate: (id: string, updates: any) => void;
+  canEdit?: boolean;
 }
 
-const DigitalIdModal: React.FC<DigitalIdModalProps> = ({ vehicle, isDark, onClose, onUpdate }) => {
+const DigitalIdModal: React.FC<DigitalIdModalProps> = ({ vehicle, isDark, onClose, onUpdate, canEdit = true }) => {
   const [localFileira, setLocalFileira] = React.useState(vehicle?.fileira || '');
   const [localPosicao, setLocalPosicao] = React.useState(vehicle?.posicao || '');
   const [isSaving, setIsSaving] = React.useState(false);
 
   const saveToFirestore = async (field: 'fileira' | 'posicao', value: string) => {
     if (!vehicle?.id) return;
+    if (!canEdit) {
+      toast.error('Perfil Visualizador: alteração de localização não permitida.');
+      return;
+    }
     setIsSaving(true);
     try {
       await updateDoc(doc(db, "vehicles", vehicle.id), { [field]: value });
@@ -520,10 +543,11 @@ const DigitalIdModal: React.FC<DigitalIdModalProps> = ({ vehicle, isDark, onClos
                   <label className="block text-[8px] font-black uppercase opacity-40 mb-1">Fileira</label>
                   <input 
                     type="text"
+                    disabled={!canEdit}
                     value={localFileira}
                     onChange={(e) => setLocalFileira(e.target.value.toUpperCase())}
                     onBlur={(e) => saveToFirestore('fileira', e.target.value)}
-                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
+                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
                     placeholder="---"
                   />
                </div>
@@ -531,10 +555,11 @@ const DigitalIdModal: React.FC<DigitalIdModalProps> = ({ vehicle, isDark, onClos
                   <label className="block text-[8px] font-black uppercase opacity-40 mb-1">Posição</label>
                   <input 
                     type="text"
+                    disabled={!canEdit}
                     value={localPosicao}
                     onChange={(e) => setLocalPosicao(e.target.value.toUpperCase())}
                     onBlur={(e) => saveToFirestore('posicao', e.target.value)}
-                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
+                    className={`w-full bg-transparent border-b font-black text-xs p-1 outline-none transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${isDark ? 'border-slate-700 focus:border-orange-500 text-white' : 'border-orange-200 focus:border-orange-500 text-slate-900'}`}
                     placeholder="---"
                   />
                </div>
@@ -857,6 +882,7 @@ interface Vehicle {
   precoMinimo?: number | string; // PREÇO MÍNIMO
   situacaoDetran?: string; // SITUAÇÃO DETRAN
   enderecoPatio?: string; // ENDEREÇO DO PÁTIO
+  endereco_patio?: string;
   municipio: string; // MUNICÍPIO
   fileira?: string; // FILEIRA
   posicao?: string; // POSIÇÃO/NÚMERO
@@ -946,7 +972,7 @@ const formatDate = (date: any) => {
   }
 };
 
-const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspection, isDark, isVistoriado, inspectedResults, onUpdate }: any) => {
+const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspection, isDark, isVistoriado, inspectedResults, onUpdate, canEdit = true }: any) => {
   const [localNotes, setLocalNotes] = React.useState(vehicle?.notes || '');
   const [isSavingNotes, setIsSavingNotes] = React.useState(false);
 
@@ -954,6 +980,10 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
 
   const saveNotes = async () => {
     if (!vehicle.id) return;
+    if (!canEdit) {
+      toast.error('Perfil Visualizador: edição de notas não permitida.');
+      return;
+    }
     setIsSavingNotes(true);
     try {
       await updateDoc(doc(db, "vehicles", vehicle.id), { notes: localNotes });
@@ -1160,7 +1190,7 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
                         <p className={`text-[10px] ${isDark ? 'text-slate-400' : 'text-gray-500'} font-medium`}>Anotações internas sobre o estado, documentação ou localização do veículo.</p>
                      </div>
                   </div>
-                  {localNotes !== (vehicle.notes || '') && (
+                  {canEdit && localNotes !== (vehicle.notes || '') && (
                      <button
                         onClick={saveNotes}
                         disabled={isSavingNotes}
@@ -1183,8 +1213,9 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
                
                <textarea
                   value={localNotes}
-                  onChange={(e) => setLocalNotes(e.target.value)}
-                  placeholder="Escreva notas ou observações específicas sobre o veículo aqui..."
+                  readOnly={!canEdit}
+                  onChange={(e) => { if (canEdit) setLocalNotes(e.target.value); }}
+                  placeholder={canEdit ? "Escreva notas ou observações específicas sobre o veículo aqui..." : "Sem notas registradas (modo somente consulta)"}
                   rows={3}
                   className={`w-full p-3 rounded-lg border text-xs focus:ring-1 focus:ring-blue-500 outline-none transition-colors resize-none ${
                      isDark 
@@ -1216,7 +1247,7 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
                 </div>
                 Visualizar Laudo Final
              </button>
-           ) : (
+           ) : canEdit ? (
              <button 
                onClick={() => onStartInspection(vehicle)}
                className="flex-[1.5] h-14 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 shadow-xl shadow-emerald-900/20 transition-all flex items-center justify-center gap-2 group"
@@ -1226,6 +1257,11 @@ const VehicleDetailsModal = ({ vehicle, onClose, onStartInspection, onViewInspec
                 </div>
                 Iniciar Vistoria Técnica
              </button>
+           ) : (
+             <div className={`flex-[1.5] h-14 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 border ${isDark ? 'bg-slate-800/40 border-slate-700 text-slate-400' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
+               <Eye size={16} />
+               <span>Modo Visualizador (Somente Consulta)</span>
+             </div>
            )}
         </div>
       </div>
@@ -1246,14 +1282,64 @@ const App = () => {
   const [wizSubPhase, setWizSubPhase] = useState('TIPO');
   const [wizStep, setWizStep] = useState(0);
   const [acceptResponsibility, setAcceptResponsibility] = useState(false);
+  const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
+  const [user, setUser] = useState<User | null>(null);
+  const [systemUserProfile, setSystemUserProfile] = useState<SystemUser | null>(null);
+  const [checkingApproval, setCheckingApproval] = useState(false);
+  const [registrationSyncError, setRegistrationSyncError] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  const ADMIN_EMAILS = ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com'];
+  const currentNormalizedEmail = (user?.email || auth.currentUser?.email || '').trim().toLowerCase();
+  const isAdminMaster = ADMIN_EMAILS.some(e => e.toLowerCase() === currentNormalizedEmail);
+
+  // Categoria efetiva e permissões de escrita
+  const userRole: 'admin' | 'vistoriador' | 'visualizador' = isAdminMaster
+    ? 'admin'
+    : (systemUserProfile?.role || 'visualizador');
+  const isViewerOnly = !isAdminMaster && userRole === 'visualizador';
+  const canWriteOperations =
+    isAdminMaster ||
+    (systemUserProfile?.status === 'active' && userRole !== 'visualizador');
+
+  // Permissões geográficas por pátio (ADM Master acessa todos os pátios)
+  const userIsRestricted = isUserRestrictedByPatio(systemUserProfile, isAdminMaster);
+  const userAllowedPatios = getUserAllowedPatios(systemUserProfile, isAdminMaster);
+
+  const isVehicleAllowed = (v?: Partial<Vehicle> | null) => {
+    return isUserAllowedForVehicle(v, systemUserProfile, isAdminMaster);
+  };
+
+  // Endereços de pátio cadastrados no sistema (sem mistura com nomes livres ou cidades)
+  const registeredYardAddresses = useMemo(() => {
+    return getRegisteredYardAddresses(frota);
+  }, [frota]);
+
   const [inspectedResults, setInspectedResults] = useState<Inspection[]>([]);
+  const [duplicateVehicleDocIds, setDuplicateVehicleDocIds] = useState<string[]>([]);
+  const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
   const [dashboardSearchTerm, setDashboardSearchTerm] = useState('');
   const [dashboardFilterClass, setDashboardFilterClass] = useState('TODOS');
   const [showUserManualModal, setShowUserManualModal] = useState(false);
 
+  // Frota e Laudos estritamente filtrados pelos pátios permitidos do usuário
+  const allowedFrota = useMemo(() => {
+    if (!userIsRestricted) return frota;
+    return frota.filter(v => isUserAllowedForVehicle(v, systemUserProfile, isAdminMaster));
+  }, [frota, userIsRestricted, systemUserProfile, isAdminMaster]);
+
+  const allowedInspectedResults = useMemo(() => {
+    if (!userIsRestricted) return inspectedResults;
+    return inspectedResults.filter(r => {
+      const rNorm = normalizeVehicleToken(r.placa);
+      const matchingVehicle = frota.find(f => normalizeVehicleToken(f.placa) === rNorm) || r.fullData?.vehicle;
+      return isUserAllowedForVehicle(matchingVehicle, systemUserProfile, isAdminMaster);
+    });
+  }, [inspectedResults, frota, userIsRestricted, systemUserProfile, isAdminMaster]);
+
   const filteredInspectedResults = useMemo(() => {
-    let results = inspectedResults;
-    
+    let results = allowedInspectedResults;
+
     if (dashboardFilterClass !== 'TODOS') {
       results = results.filter(r => r.class === dashboardFilterClass);
     }
@@ -1267,16 +1353,18 @@ const App = () => {
       String(r.fullData?.vehicle?.fileira || '').toLowerCase().includes(term) || 
       String(r.fullData?.vehicle?.posicao || '').toLowerCase().includes(term)
     );
-  }, [inspectedResults, dashboardSearchTerm, dashboardFilterClass]);
+  }, [allowedInspectedResults, dashboardSearchTerm, dashboardFilterClass]);
 
   const dashboardStats = useMemo(() => {
-    const total = inspectedResults.length;
+    const list = allowedInspectedResults;
+
+    const total = list.length;
     
     // Cálculo de valores totais
     let totalMarketValue = 0; // Soma total das FIPEs
     let totalRevenue = 0;      // Soma total dos Preços Mínimos (FIPE * %)
 
-    inspectedResults.forEach(r => {
+    list.forEach(r => {
       const vehicle = r.fullData?.vehicle;
       if (!vehicle) return;
 
@@ -1296,7 +1384,7 @@ const App = () => {
       totalMarketValue,
       totalRevenue
     };
-  }, [inspectedResults]);
+  }, [allowedInspectedResults]);
   const [isCapturing, setIsCapturing] = useState<{ field: string; active: boolean }>({ field: '', active: false });
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -1384,44 +1472,49 @@ const App = () => {
       }
     }
   };
-  const [frota, setFrota] = useState<Vehicle[]>(INITIAL_FROTA);
   const [selectedYardsForBulk, setSelectedYardsForBulk] = useState<string[]>([]);
   const [showYardDeleteConfirm, setShowYardDeleteConfirm] = useState(false);
   const [editingYard, setEditingYard] = useState<{ originalName: string; name: string; address: string } | null>(null);
 
   const yardStats = useMemo(() => {
-    const stats: Record<string, { total: number; inspected: number; impediments: number; address: string }> = {};
+    const stats: Record<string, { total: number; inspected: number; impediments: number; address: string; displayName: string }> = {};
     
-    // Lista de placas com vistorias e impedimentos para cruzamento rápido
-    const inspectedPlates = new Set(inspectedResults.map(r => r.placa));
+    // Lista de placas normalizadas com vistorias e impedimentos dentro dos pátios permitidos
+    const inspectedPlates = new Set(
+      allowedInspectedResults.map(r => normalizeVehicleToken(r.placa)).filter(Boolean)
+    );
     const impedimentPlates = new Set(
-      inspectedResults
+      allowedInspectedResults
         .filter(r => r.fullData?.hasImpediment || r.class === 'IMPEDIMENTOS')
-        .map(r => r.placa)
+        .map(r => normalizeVehicleToken(r.placa))
+        .filter(Boolean)
     );
 
-    frota.forEach(v => {
-      const city = String(v.municipio || 'NÃO INFORMADO').toUpperCase();
-      if (!stats[city]) {
-        stats[city] = { total: 0, inspected: 0, impediments: 0, address: '' };
+    allowedFrota.forEach(v => {
+      const { key, displayName, address } = getCanonicalYardIdentity(v.municipio, v.enderecoPatio);
+      if (!stats[key]) {
+        stats[key] = { total: 0, inspected: 0, impediments: 0, address: address || '', displayName };
       }
-      stats[city].total += 1;
+      stats[key].total += 1;
       
-      if (v.enderecoPatio && !stats[city].address) {
-        stats[city].address = v.enderecoPatio;
-      }
-      
-      if (inspectedPlates.has(v.placa)) {
-        stats[city].inspected += 1;
+      if (address && !stats[key].address) {
+        stats[key].address = address;
+      } else if (v.enderecoPatio && !stats[key].address) {
+        stats[key].address = canonicalizeRegisteredYardAddress(v.enderecoPatio) || v.enderecoPatio;
       }
       
-      if (impedimentPlates.has(v.placa)) {
-        stats[city].impediments += 1;
+      const normPlaca = normalizeVehicleToken(v.placa);
+      if (normPlaca && inspectedPlates.has(normPlaca)) {
+        stats[key].inspected += 1;
+      }
+      
+      if (normPlaca && impedimentPlates.has(normPlaca)) {
+        stats[key].impediments += 1;
       }
     });
 
     return Object.entries(stats).sort((a, b) => b[1].total - a[1].total);
-  }, [frota, inspectedResults]);
+  }, [allowedFrota, allowedInspectedResults]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('');
@@ -1449,8 +1542,6 @@ const App = () => {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [viewingHistory, setViewingHistory] = useState<string | null>(null);
@@ -1458,6 +1549,21 @@ const App = () => {
   const [sourceTab, setSourceTab] = useState<string>('inicio');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Limpa seleção de pátio ou bloqueia abas caso permissões sejam alteradas em tempo real
+  useEffect(() => {
+    const yardInvalid = Boolean(selectedYard && !yardStats.some(([city]) => city === selectedYard));
+    const tabRestricted =
+      (isViewerOnly && (activeTab === 'incluir_veiculos' || activeTab === 'planilha')) ||
+      (!isAdminMaster && activeTab === 'usuarios');
+    if (!yardInvalid && !tabRestricted) return;
+
+    const timer = window.setTimeout(() => {
+      if (yardInvalid) setSelectedYard(null);
+      if (tabRestricted) setActiveTab('inicio');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedYard, yardStats, isViewerOnly, isAdminMaster, activeTab]);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: any) => {
@@ -1509,11 +1615,6 @@ const App = () => {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const isDark = theme === 'dark';
-  const ADMIN_EMAILS = ['lorranogab@gmail.com', 'cbmpr.leilao@gmail.com'];
-  // const isAdminMaster = ...
-  // const isAdminMaster = ADMIN_EMAILS.includes(user?.email || '') || ADMIN_EMAILS.includes(auth.currentUser?.email || '');
-  const isAdminMaster = ADMIN_EMAILS.includes(user?.email || '') || ADMIN_EMAILS.includes(auth.currentUser?.email || '');
-  console.log('isAdminMaster check', isAdminMaster);
 
   const getVehicleIcon = (modelo: string) => {
     const m = String(modelo || '').toUpperCase();
@@ -1533,10 +1634,11 @@ const App = () => {
   };
 
   const handleViewInspectionFromDetails = (v: any) => {
-    const isVistoriado = evaluatedPlacaSet.has(v.placa);
+    const targetPlaca = normalizeVehicleToken(v.placa);
+    const isVistoriado = Boolean(targetPlaca && evaluatedPlacaSet.has(targetPlaca));
     if (!isVistoriado) return;
     
-    const existing = inspectedResults.find((r: any) => r.placa === v.placa);
+    const existing = inspectedResults.find((r: any) => normalizeVehicleToken(r.placa) === targetPlaca);
     if (existing && existing.fullData) {
       setLaudoData(existing.fullData);
       setViewMode(true);
@@ -1582,40 +1684,26 @@ const App = () => {
     const hasCleared = localStorage.getItem('argos_laudos_cleared') === 'true';
 
     try {
-      // 1. Fetch vehicles from remote Firestore
-      const vQuery = query(collection(db, "vehicles"));
-      const vSnap = await getDocs(vQuery);
+      // 1. Fetch vehicles and inspections from remote Firestore
+      const [vSnap, iSnap] = await Promise.all([
+        getDocs(query(collection(db, "vehicles"))),
+        getDocs(query(collection(db, "inspections")))
+      ]);
+
       const vData = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
       vData.sort((a: any, b: any) => (b.uploadedAt?.toMillis() || 0) - (a.uploadedAt?.toMillis() || 0));
 
-      if (vData.length > 0) {
-        setFrota(vData);
-        saveLocalFleet(vData).catch(() => {});
-      } else {
-        // If remote has 0 vehicles, check IndexedDB local cache before fallback
-        const localFleet = (await getLocalFleet().catch(() => [])) as Vehicle[];
-        if (localFleet.length > 0) {
-          setFrota(localFleet);
-        } else if (!hasCleared) {
-          setFrota(INITIAL_FROTA);
-        } else {
-          setFrota([]);
-        }
-      }
-
-      // 2. Fetch inspections from Firestore
-      const iQuery = query(collection(db, "inspections"));
-      const iSnap = await getDocs(iQuery);
       const iData = iSnap.docs
         .map(d => ({ ...d.data(), id: d.id } as Inspection))
         .filter(d => !deletedIds.includes(d.id) && !deletedIds.includes(d.fullData?.id));
       
-      // 3. Merge with any locally stored offline inspections (excluding deleted ones)
+      // Merge with locally stored offline inspections (excluding deleted ones)
       try {
         const idbInspections = await getLocalInspections().catch(() => []);
         for (const item of idbInspections) {
           if (deletedIds.includes(item.id as string) || deletedIds.includes((item.fullData as any)?.id)) continue;
-          if (!iData.some(remote => (remote.id && remote.id === item.id) || (remote.placa === item.placa && remote.data === item.data))) {
+          const itemPlaca = normalizeVehicleToken(item.placa);
+          if (!iData.some(remote => (remote.id && remote.id === item.id) || (itemPlaca && normalizeVehicleToken(remote.placa) === itemPlaca && remote.data === item.data))) {
             iData.push(item as Inspection);
           }
         }
@@ -1624,7 +1712,8 @@ const App = () => {
           const localList: any[] = JSON.parse(localRaw);
           for (const item of localList) {
             if (deletedIds.includes(item.id) || deletedIds.includes(item.fullData?.id)) continue;
-            if (!iData.some(remote => (remote.id && remote.id === item.id) || (remote.placa === item.placa && remote.data === item.data))) {
+            const itemPlaca = normalizeVehicleToken(item.placa);
+            if (!iData.some(remote => (remote.id && remote.id === item.id) || (itemPlaca && normalizeVehicleToken(remote.placa) === itemPlaca && remote.data === item.data))) {
               iData.push(item);
             }
           }
@@ -1633,45 +1722,68 @@ const App = () => {
         console.warn('Erro ao carregar laudos locais:', err);
       }
 
-      // Only inject mock inspections if user has never cleared or deleted any, and the list is genuinely empty
       if (iData.length === 0 && !hasCleared && deletedIds.length === 0) {
         iData.push(...MOCK_INSPECTIONS);
       }
 
-      iData.sort((a: any, b: any) => (b.inspectedAt?.toMillis() || (b.inspectedAt?.seconds ? b.inspectedAt.seconds * 1000 : 0)) - (a.inspectedAt?.toMillis() || (a.inspectedAt?.seconds ? a.inspectedAt.seconds * 1000 : 0)));
-      setInspectedResults(iData);
-    } catch (e) {
-      console.warn("Could not load remote Firestore data, using local/initial cache:", e);
-      try {
-        // Load local fleet
+      const dedupedInspections = deduplicateInspections(iData);
+      setInspectedResults(dedupedInspections);
+
+      const inspectedPlateSet = new Set(
+        dedupedInspections.map(r => normalizeVehicleToken(r.placa)).filter(Boolean)
+      );
+
+      if (vData.length > 0) {
+        const dedupResult = deduplicateVehicles(vData, inspectedPlateSet);
+        setFrota(dedupResult.uniqueVehicles);
+        setDuplicateVehicleDocIds(dedupResult.duplicateDocIds);
+        saveLocalFleet(dedupResult.uniqueVehicles).catch(() => {});
+      } else {
+        setDuplicateVehicleDocIds([]);
         const localFleet = (await getLocalFleet().catch(() => [])) as Vehicle[];
         if (localFleet.length > 0) {
-          setFrota(localFleet);
+          const dedupLocal = deduplicateVehicles(localFleet, inspectedPlateSet);
+          setFrota(dedupLocal.uniqueVehicles);
         } else if (!hasCleared) {
           setFrota(INITIAL_FROTA);
         } else {
           setFrota([]);
         }
-
-        // Load local inspections
+      }
+    } catch (e) {
+      console.warn("Could not load remote Firestore data, using local/initial cache:", e);
+      try {
         const idbInspections = await getLocalInspections().catch(() => []);
         const combinedLocal: any[] = [...idbInspections];
         const localRaw = localStorage.getItem('argos_local_backup_laudos');
         if (localRaw) {
           const parsed: any[] = JSON.parse(localRaw);
           for (const it of parsed) {
-            if (!combinedLocal.some(c => c.id === it.id || (c.placa === it.placa && c.data === it.data))) {
+            const itPlaca = normalizeVehicleToken(it.placa);
+            if (!combinedLocal.some(c => c.id === it.id || (itPlaca && normalizeVehicleToken(c.placa) === itPlaca && c.data === it.data))) {
               combinedLocal.push(it);
             }
           }
         }
+        let finalInspections: Inspection[] = [];
         if (combinedLocal.length > 0) {
           const filtered = combinedLocal.filter(item => !deletedIds.includes(item.id) && !deletedIds.includes(item.fullData?.id));
-          setInspectedResults(filtered);
+          finalInspections = deduplicateInspections(filtered);
         } else if (!hasCleared && deletedIds.length === 0) {
-          setInspectedResults(MOCK_INSPECTIONS);
+          finalInspections = MOCK_INSPECTIONS;
+        }
+        setInspectedResults(finalInspections);
+
+        const inspectedPlateSet = new Set(
+          finalInspections.map(r => normalizeVehicleToken(r.placa)).filter(Boolean)
+        );
+        const localFleet = (await getLocalFleet().catch(() => [])) as Vehicle[];
+        if (localFleet.length > 0) {
+          setFrota(deduplicateVehicles(localFleet, inspectedPlateSet).uniqueVehicles);
+        } else if (!hasCleared) {
+          setFrota(INITIAL_FROTA);
         } else {
-          setInspectedResults([]);
+          setFrota([]);
         }
       } catch {
         if (!hasCleared && deletedIds.length === 0) {
@@ -1709,11 +1821,185 @@ const App = () => {
       setAuthReady(true);
     }, 1500);
 
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    let userProfileUnsub: (() => void) | null = null;
+    let loadedForUid: string | null = null;
+
+    const syncUserRecord = async (u: User): Promise<SystemUser | null> => {
+      if (!u || !u.email) return null;
+      const cleanEmail = u.email.trim().toLowerCase();
+      const isAdminEmail = cleanEmail === 'cbmpr.leilao@gmail.com' || cleanEmail === 'lorranogab@gmail.com';
+      const userDocRef = doc(db, 'users', u.uid);
+
+      try {
+        const userSnap = await getDoc(userDocRef);
+
+        if (userSnap.exists()) {
+          const rawData = userSnap.data() as SystemUser;
+          const data: SystemUser = {
+            ...rawData,
+            id: u.uid,
+            uid: u.uid,
+            email: cleanEmail
+          };
+
+          if (isAdminEmail) {
+            // ADM Master sempre possui acesso global irrestrito a todos os pátios e usuários
+            const needsMasterFix =
+              data.role !== 'admin' ||
+              data.status !== 'active' ||
+              !Array.isArray(data.allowedPatios) ||
+              !data.allowedPatios.includes('TODOS');
+
+            data.role = 'admin';
+            data.status = 'active';
+            data.allowedPatios = ['TODOS'];
+
+            if (needsMasterFix) {
+              await updateDoc(userDocRef, {
+                role: 'admin',
+                status: 'active',
+                allowedPatios: ['TODOS'],
+                displayName: data.displayName || u.displayName || cleanEmail.split('@')[0],
+                photoURL: u.photoURL || data.photoURL || '',
+                lastLogin: new Date().toISOString()
+              }).catch(() => {});
+            } else {
+              await updateDoc(userDocRef, {
+                lastLogin: new Date().toISOString(),
+                photoURL: u.photoURL || data.photoURL || '',
+                displayName: data.displayName || u.displayName || cleanEmail.split('@')[0]
+              }).catch(() => {});
+            }
+          } else {
+            // Usuários comuns: atualiza somente metadados de perfil, preservando role, status e allowedPatios
+            await updateDoc(userDocRef, {
+              lastLogin: new Date().toISOString(),
+              photoURL: u.photoURL || data.photoURL || '',
+              displayName: data.displayName || u.displayName || cleanEmail.split('@')[0]
+            }).catch(() => {});
+          }
+          setRegistrationSyncError(null);
+          setSystemUserProfile(data);
+          return data;
+        } else {
+          // Primeiro login no UID real: verifica pré-cadastro administrativo (apenas para e-mail verificado)
+          let preRegData: Partial<SystemUser> | null = null;
+          let preRegDocId: string | null = null;
+          if (!isAdminEmail && u.emailVerified) {
+            try {
+              const preDocId = `user_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+              const preSnap = await getDoc(doc(db, 'users', preDocId));
+              if (preSnap.exists() && (preSnap.data().email || '').trim().toLowerCase() === cleanEmail) {
+                preRegData = preSnap.data() as SystemUser;
+                preRegDocId = preDocId;
+              }
+            } catch {
+              // Ignora se não houver pré-cadastro ou permissão de leitura do doc auxiliar
+            }
+          }
+
+          const newUserData: SystemUser = {
+            id: u.uid,
+            uid: u.uid,
+            email: cleanEmail,
+            displayName: preRegData?.displayName || (cleanEmail === 'lorranogab@gmail.com' ? 'Lorran Oliveira Gabeiras' : (u.displayName || cleanEmail.split('@')[0])),
+            photoURL: u.photoURL || preRegData?.photoURL || '',
+            role: isAdminEmail ? 'admin' : (preRegData?.role || 'visualizador'),
+            status: isAdminEmail ? 'active' : (preRegData?.status || 'pending'),
+            cargo: isAdminEmail ? 'Administrador do Sistema Master' : (preRegData?.cargo || 'Aguardando Autorização (Visualizador)'),
+            postoGrad: preRegData?.postoGrad || 'Outro',
+            matricula: preRegData?.matricula || '',
+            telefone: preRegData?.telefone || '',
+            lotacao: preRegData?.lotacao || 'CSM - Curitiba (Centro de Suprimento e Manutenção)',
+            allowedPatios: isAdminEmail ? ['TODOS'] : (Array.isArray(preRegData?.allowedPatios) ? preRegData!.allowedPatios : []),
+            requestedAt: preRegData?.requestedAt || new Date().toISOString(),
+            createdAt: preRegData?.createdAt || new Date().toISOString(),
+            lastLogin: new Date().toISOString(),
+            ...(preRegDocId ? { preRegId: preRegDocId } : {})
+          };
+
+          await setDoc(userDocRef, newUserData);
+          setRegistrationSyncError(null);
+          setSystemUserProfile(newUserData);
+          return newUserData;
+        }
+      } catch (err) {
+        console.error('Erro ao sincronizar usuário no Firestore:', err);
+        setRegistrationSyncError('Não foi possível confirmar o registro automático no servidor. Clique em "Verificar / Reenviar Solicitação".');
+        // Fail-closed: nunca concede acesso administrativo ou irrestrito em caso de erro de rede/permissão
+        if (isAdminEmail) {
+          const masterFallback: SystemUser = {
+            id: u.uid,
+            uid: u.uid,
+            email: cleanEmail,
+            displayName: u.displayName || cleanEmail.split('@')[0],
+            photoURL: u.photoURL || '',
+            role: 'admin',
+            status: 'active',
+            allowedPatios: ['TODOS']
+          };
+          setSystemUserProfile(masterFallback);
+          return masterFallback;
+        } else {
+          const pendingFallback: SystemUser = {
+            id: u.uid,
+            uid: u.uid,
+            email: cleanEmail,
+            displayName: u.displayName || cleanEmail.split('@')[0],
+            photoURL: u.photoURL || '',
+            role: 'visualizador',
+            status: 'pending',
+            allowedPatios: [],
+            requestedAt: new Date().toISOString()
+          };
+          setSystemUserProfile(pendingFallback);
+          return pendingFallback;
+        }
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       clearTimeout(fallbackTimer);
       setUser(u);
       setAuthReady(true);
-      fetchInitialData();
+
+      if (userProfileUnsub) {
+        userProfileUnsub();
+        userProfileUnsub = null;
+      }
+
+      if (u && u.email) {
+        const cleanEmail = u.email.trim().toLowerCase();
+        const isMasterEmail = cleanEmail === 'cbmpr.leilao@gmail.com' || cleanEmail === 'lorranogab@gmail.com';
+        const resolved = await syncUserRecord(u);
+
+        if ((isMasterEmail || resolved?.status === 'active') && loadedForUid !== u.uid) {
+          loadedForUid = u.uid;
+          fetchInitialData();
+        }
+
+        // Listener em tempo real no documento do usuário: atualiza perfil e pátios instantaneamente
+        const userDocRef = doc(db, 'users', u.uid);
+        userProfileUnsub = onSnapshot(userDocRef, (snap) => {
+          if (snap.exists()) {
+            const latest = snap.data() as SystemUser;
+            setSystemUserProfile(
+              isMasterEmail
+                ? { ...latest, role: 'admin', status: 'active', allowedPatios: ['TODOS'] }
+                : latest
+            );
+            if ((isMasterEmail || latest.status === 'active') && loadedForUid !== u.uid) {
+              loadedForUid = u.uid;
+              fetchInitialData();
+            }
+          }
+        }, (err) => {
+          console.warn('Erro no listener do perfil:', err);
+        });
+      } else {
+        loadedForUid = null;
+        setSystemUserProfile(null);
+      }
     }, (err) => {
       console.warn("Auth state error:", err);
       clearTimeout(fallbackTimer);
@@ -1723,13 +2009,71 @@ const App = () => {
     return () => {
       clearTimeout(fallbackTimer);
       unsubscribe();
+      if (userProfileUnsub) {
+        userProfileUnsub();
+      }
     };
   }, []);
+
+  const handleCheckApproval = async () => {
+    if (!auth.currentUser) return;
+    const currentU = auth.currentUser;
+    setCheckingApproval(true);
+    try {
+      const userRef = doc(db, 'users', currentU.uid);
+      const snap = await getDoc(userRef);
+      if (snap.exists()) {
+        const data = snap.data() as SystemUser;
+        setRegistrationSyncError(null);
+        setSystemUserProfile(data);
+        if (data.status === 'active') {
+          fetchInitialData();
+          toast.success('Seu acesso foi autorizado pelo Administrador! Entrando no sistema...');
+        } else if (data.status === 'pending') {
+          toast.info('Sua solicitação está registrada e aguarda aprovação do Administrador para atribuir seus pátios.');
+        } else {
+          toast.error('Seu acesso foi desativado temporariamente pela administração.');
+        }
+      } else if (currentU.email) {
+        // Caso o primeiro registro tenha falhado por conexão, reenvia o cadastro pendente
+        const cleanEmail = currentU.email.trim().toLowerCase();
+        const pendingPayload: SystemUser = {
+          id: currentU.uid,
+          uid: currentU.uid,
+          email: cleanEmail,
+          displayName: currentU.displayName || cleanEmail.split('@')[0],
+          photoURL: currentU.photoURL || '',
+          role: 'visualizador',
+          status: 'pending',
+          cargo: 'Aguardando Autorização (Visualizador)',
+          postoGrad: 'Outro',
+          matricula: '',
+          telefone: '',
+          lotacao: 'CSM - Curitiba (Centro de Suprimento e Manutenção)',
+          allowedPatios: [],
+          requestedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString()
+        };
+        await setDoc(userRef, pendingPayload);
+        setRegistrationSyncError(null);
+        setSystemUserProfile(pendingPayload);
+        toast.success('Solicitação de acesso registrada e enviada ao Administrador!');
+      }
+    } catch (err) {
+      console.warn(err);
+      setRegistrationSyncError('Falha ao comunicar com o servidor. Tente novamente em instantes.');
+      toast.error('Erro ao verificar status. Tente novamente.');
+    } finally {
+      setCheckingApproval(false);
+    }
+  };
 
   const loginWithGoogle = async () => {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
+      // onAuthStateChanged dispara automaticamente o syncUserRecord sem sobrescrever permissões aprovadas
     } catch (e: any) {
       console.error(e);
       const errorCode = e.code || "";
@@ -1743,7 +2087,7 @@ const App = () => {
                  errorStr.includes('invalid-credential')) {
         setAuthError("Credenciais inválidas ou sessão expirada.");
       } else if (errorCode === 'auth/popup-closed-by-user') {
-        // Just ignore if the user closed the popup
+        // Ignora se o usuário fechou o popup
       } else {
         setAuthError("Erro na autenticação com Google: " + errorMessage);
       }
@@ -1792,89 +2136,348 @@ const App = () => {
     }
   };
 
-  const handleAddVehiclesPlanilha = async (newVehicles: Vehicle[]) => {
-    setLoadingTask({ type: 'loading', message: 'Salvando novos veículos...' });
+  const ALLOWED_VEHICLE_WRITE_KEYS = [
+    '_ord', 'orgao', 'placa', 'modelo', 'tipo', 'avaliacao',
+    'chassi', 'motor', 'ano', 'comb', 'patrimonio', 'cor', 'origem',
+    'renavam', 'fipe', 'pctFipe', 'precoMinimo', 'situacaoDetran',
+    'enderecoPatio', 'endereco_patio', 'municipio', 'fileira', 'posicao',
+    'notes', 'endereco'
+  ] as const;
+
+  const buildCleanVehiclePayload = (v: Partial<Vehicle>) => {
+    let numericFipe = v.fipe;
+    if (typeof numericFipe === 'string') {
+      numericFipe = parseFloat(numericFipe.replace(/[^\d.,]/g, '').replace(',', '.') || '0');
+      if (isNaN(numericFipe)) numericFipe = 0;
+    }
+    if (numericFipe === undefined || numericFipe === null) {
+      numericFipe = 0;
+    }
+
+    const rawPatioAddr = v.enderecoPatio || v.endereco_patio || '';
+    const canonicalAddr = canonicalizeRegisteredYardAddress(rawPatioAddr) || String(rawPatioAddr).trim();
+    const canonicalYard = getCanonicalYardIdentity(v.municipio, canonicalAddr);
+
+    const payload: Record<string, any> = {
+      placa: String(v.placa || '').trim().toUpperCase(),
+      fipe: numericFipe,
+    };
+
+    const STRING_FIELDS = new Set([
+      'orgao', 'modelo', 'tipo', 'chassi', 'motor', 'ano', 'comb',
+      'patrimonio', 'cor', 'origem', 'renavam', 'situacaoDetran',
+      'enderecoPatio', 'endereco_patio', 'municipio', 'fileira', 'posicao', 'notes'
+    ]);
+
+    for (const key of ALLOWED_VEHICLE_WRITE_KEYS) {
+      if (key === 'placa' || key === 'fipe') continue;
+      const rawVal = (v as any)[key];
+      if (rawVal === undefined || rawVal === null) continue;
+      if (key === 'enderecoPatio' || key === 'endereco_patio') {
+        payload[key] = canonicalAddr;
+      } else if (key === 'municipio') {
+        payload[key] = canonicalYard.displayName !== 'NÃO INFORMADO' ? canonicalYard.displayName : String(rawVal).trim().toUpperCase();
+      } else if (STRING_FIELDS.has(key)) {
+        payload[key] = String(rawVal).trim();
+      } else {
+        payload[key] = typeof rawVal === 'string' ? rawVal.trim() : rawVal;
+      }
+    }
+
+    if (!payload.municipio && canonicalYard.displayName !== 'NÃO INFORMADO') {
+      payload.municipio = canonicalYard.displayName;
+    }
+    if (canonicalAddr && !payload.enderecoPatio) {
+      payload.enderecoPatio = canonicalAddr;
+    }
+
+    return payload;
+  };
+
+  const hasVehiclePayloadChanged = (existing: Vehicle, nextPayload: Record<string, any>): boolean => {
+    for (const [k, val] of Object.entries(nextPayload)) {
+      const prevVal = (existing as any)[k];
+      if (k === 'fipe') {
+        const prevNum = typeof prevVal === 'number' ? prevVal : parseFloat(String(prevVal || '0').replace(/[^\d.,]/g, '').replace(',', '.') || '0');
+        const nextNum = typeof val === 'number' ? val : parseFloat(String(val || '0').replace(/[^\d.,]/g, '').replace(',', '.') || '0');
+        if ((isNaN(prevNum) ? 0 : prevNum) !== (isNaN(nextNum) ? 0 : nextNum)) return true;
+        continue;
+      }
+      const normPrev = prevVal === undefined || prevVal === null ? '' : prevVal;
+      const normNext = val === undefined || val === null ? '' : val;
+      if (typeof normPrev === 'object' || typeof normNext === 'object') {
+        if (JSON.stringify(normPrev) !== JSON.stringify(normNext)) return true;
+      } else if (String(normPrev).trim() !== String(normNext).trim()) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const handleCleanDuplicateVehicles = async () => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para higienizar a base de dados.');
+      return;
+    }
+    if (cleaningDuplicates) return;
+
+    setCleaningDuplicates(true);
+    setLoadingTask({ type: 'exclusion', message: 'Verificando e higienizando registros duplicados na base...', progress: 15 });
     try {
-      // Chunk batches (max 500 writes)
+      const [vSnap, iSnap] = await Promise.all([
+        getDocs(query(collection(db, "vehicles"))),
+        getDocs(query(collection(db, "inspections")))
+      ]);
+
+      const remoteVehicles = vSnap.docs.map(d => ({ ...d.data(), id: d.id } as Vehicle));
+      const inspectedPlateSet = new Set(
+        iSnap.docs
+          .map(d => normalizeVehicleToken((d.data() as any).placa))
+          .filter(Boolean)
+      );
+
+      const dedupResult = deduplicateVehicles(remoteVehicles, inspectedPlateSet);
+      if (dedupResult.duplicateDocIds.length === 0) {
+        setDuplicateVehicleDocIds([]);
+        toast.info('A base de veículos já está limpa e sem duplicidades.');
+        await fetchInitialData();
+        return;
+      }
+
+      const ops: Array<{ type: 'update' | 'delete'; id: string; payload?: Record<string, any> }> = [];
+      for (const primary of dedupResult.updatedPrimaryVehicles) {
+        if (primary.id && !primary.id.startsWith('upload-') && !primary.id.startsWith('new-') && !primary.id.startsWith('local-')) {
+          ops.push({ type: 'update', id: primary.id, payload: buildCleanVehiclePayload(primary) });
+        }
+      }
+      for (const dupId of dedupResult.duplicateDocIds) {
+        if (!userIsRestricted) {
+          ops.push({ type: 'delete', id: dupId });
+        } else {
+          const dupDoc = remoteVehicles.find(r => r.id === dupId);
+          if (!dupDoc || isVehicleAllowed(dupDoc)) {
+            ops.push({ type: 'delete', id: dupId });
+          }
+        }
+      }
+
+      const totalOps = ops.length;
+      for (let i = 0; i < totalOps; i += 450) {
+        const chunk = ops.slice(i, i + 450);
+        const batch = writeBatch(db);
+        for (const op of chunk) {
+          const ref = doc(db, "vehicles", op.id);
+          if (op.type === 'update' && op.payload) {
+            batch.update(ref, op.payload);
+          } else if (op.type === 'delete') {
+            batch.delete(ref);
+          }
+        }
+        await batch.commit();
+        setLoadingTask({
+          type: 'exclusion',
+          message: 'Removendo registros duplicados...',
+          progress: Math.min(95, Math.round(((i + chunk.length) / Math.max(1, totalOps)) * 100))
+        });
+      }
+
+      setDuplicateVehicleDocIds([]);
+      await fetchInitialData();
+      toast.success(`${dedupResult.duplicateDocIds.length} registro(s) duplicado(s) removido(s) da base com segurança!`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, "vehicles");
+    } finally {
+      setCleaningDuplicates(false);
+      setLoadingTask(null);
+    }
+  };
+
+  const handleAddVehiclesPlanilha = async (newVehicles: Vehicle[]) => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para cadastrar veículos.');
+      return false;
+    }
+
+    setLoadingTask({ type: 'loading', message: 'Validando duplicidades e salvando veículos...' });
+    try {
+      // Consulta base atualizada no Firestore (ou cache local) para impedir duplicidades
+      let remoteVehicles: Vehicle[] = frota.filter(f => !isMockVehicleRecord(f));
+      if (isOnline && (user || auth.currentUser)) {
+        try {
+          const snap = await getDocs(query(collection(db, "vehicles")));
+          remoteVehicles = snap.docs
+            .map(d => ({ ...d.data(), id: d.id } as Vehicle))
+            .filter(f => !isMockVehicleRecord(f));
+        } catch (readErr) {
+          console.warn('Falha ao consultar base remota durante validação de duplicidade, usando cache local:', readErr);
+        }
+      }
+
+      const existingById = new Map<string, Vehicle>();
+      const keyToExistingId = new Map<string, string>();
+      for (const ex of remoteVehicles) {
+        if (!ex.id) continue;
+        existingById.set(ex.id, ex);
+        for (const k of getVehicleFingerprintKeys(ex)) {
+          if (!keyToExistingId.has(k)) {
+            keyToExistingId.set(k, ex.id);
+          }
+        }
+      }
+
+      // Chunk batches (max 450 writes per batch)
       const batches = [];
       let batch = writeBatch(db);
       let writeCount = 0;
 
       const queueOp = () => {
         writeCount++;
-        if (writeCount === 500) {
+        if (writeCount === 450) {
           batches.push(batch);
           batch = writeBatch(db);
           writeCount = 0;
         }
       };
 
-      let addedCount = 0;
-      const validAdded: Vehicle[] = [];
+      const seenKeysInBatch = new Set<string>();
+      let createdCount = 0;
+      let updatedCount = 0;
+      let duplicateBlockedCount = 0;
+      let unchangedCount = 0;
+      let skippedCount = 0;
+      const savedRecords: Vehicle[] = [];
 
-      for (const v of newVehicles) {
-        // Skip completely empty rows
-        if (!v.placa && !v.chassi && !v.renavam) continue;
+      for (const rawVeh of newVehicles) {
+        // Ignora linhas completamente vazias
+        if (!rawVeh.placa && !rawVeh.chassi && !rawVeh.renavam && !rawVeh.patrimonio) continue;
 
-        let numericFipe = v.fipe;
-        if (typeof numericFipe === 'string') {
-          numericFipe = parseFloat(numericFipe.replace(/[^\d.,]/g, '').replace(',', '.') || '0');
-          if (isNaN(numericFipe)) numericFipe = 0;
+        const v: Vehicle = { ...rawVeh };
+
+        // Se o operador tiver restrição geográfica de pátio:
+        if (userIsRestricted) {
+          if (!v.enderecoPatio && userAllowedPatios.length > 0 && userAllowedPatios[0] !== 'TODOS') {
+            v.enderecoPatio = userAllowedPatios[0];
+          }
+          if (!isVehicleAllowed(v)) {
+            skippedCount++;
+            continue;
+          }
         }
 
-        const newDocRef = doc(collection(db, "vehicles"));
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, _ord, ...rest } = v;
-        const vehId = id || newDocRef.id;
-        const vehRecord: Vehicle = {
-          ...rest,
-          id: vehId,
-          fipe: numericFipe,
-        };
-        validAdded.push(vehRecord);
+        const cleanPayload = buildCleanVehiclePayload(v);
+        const keys = getVehicleFingerprintKeys(cleanPayload as Partial<Vehicle>);
+        const existingDoc = v.id ? existingById.get(v.id) : undefined;
 
-        batch.set(newDocRef, {
-          ...rest,
-          fipe: numericFipe,
-          uploadedAt: serverTimestamp(),
-          uploadedBy: user?.uid || auth.currentUser?.uid || 'offline_uploader',
-          uploadedByEmail: user?.email || auth.currentUser?.email || 'unknown'
-        });
-        queueOp();
-        addedCount++;
-      }
+        if (existingDoc) {
+          // Atualização de documento já existente: bloqueia se alterar identificador para colidir com OUTRO veículo
+          const collidesWithOther = keys.some(k => {
+            const ownerId = keyToExistingId.get(k);
+            return (ownerId && ownerId !== existingDoc.id) || seenKeysInBatch.has(k);
+          });
+          if (collidesWithOther) {
+            duplicateBlockedCount++;
+            continue;
+          }
 
-      if (validAdded.length > 0) {
-        setFrota(prev => {
-          const isOnlyMock = prev.length <= 5 && prev.every(p => ['ABC-1234', 'XYZ-9876', 'DEF-5678', 'JKL-3456', 'MNO-7890'].includes(p.placa || ''));
-          const base = isOnlyMock ? [] : prev;
-          const merged = [...validAdded, ...base.filter(p => !validAdded.some(v => (v.placa && v.placa === p.placa) || (v.chassi && v.chassi === p.chassi)))];
-          saveLocalFleet(merged).catch(() => {});
-          return merged;
-        });
+          keys.forEach(k => {
+            seenKeysInBatch.add(k);
+            keyToExistingId.set(k, existingDoc.id);
+          });
+
+          if (!hasVehiclePayloadChanged(existingDoc, cleanPayload)) {
+            unchangedCount++;
+            continue;
+          }
+
+          const docRef = doc(db, "vehicles", existingDoc.id);
+          batch.update(docRef, cleanPayload);
+          queueOp();
+          updatedCount++;
+          savedRecords.push({ ...existingDoc, ...cleanPayload, id: existingDoc.id } as Vehicle);
+        } else {
+          // Novo registro: bloqueia se qualquer chave (placa, chassi, renavam, patrimônio) já existir
+          const isDuplicate = keys.some(k => keyToExistingId.has(k) || seenKeysInBatch.has(k));
+          const deterministicId = getDeterministicVehicleDocId(cleanPayload as Partial<Vehicle>);
+          if (isDuplicate || (deterministicId && existingById.has(deterministicId))) {
+            duplicateBlockedCount++;
+            continue;
+          }
+
+          const targetId = deterministicId || doc(collection(db, "vehicles")).id;
+          if (existingById.has(targetId)) {
+            duplicateBlockedCount++;
+            continue;
+          }
+
+          const newDocRef = doc(db, "vehicles", targetId);
+          batch.set(newDocRef, {
+            ...cleanPayload,
+            uploadedAt: serverTimestamp(),
+            uploadedBy: user?.uid || auth.currentUser?.uid || 'offline_uploader',
+            uploadedByEmail: user?.email || auth.currentUser?.email || 'unknown'
+          });
+          queueOp();
+          createdCount++;
+
+          const createdVeh = { ...cleanPayload, id: targetId } as Vehicle;
+          savedRecords.push(createdVeh);
+          existingById.set(targetId, createdVeh);
+          keys.forEach(k => {
+            seenKeysInBatch.add(k);
+            keyToExistingId.set(k, targetId);
+          });
+        }
       }
 
       if (writeCount > 0) {
         batches.push(batch);
       }
 
-      try {
-        for (const b of batches) {
-          await b.commit();
+      if (savedRecords.length > 0) {
+        setFrota(prev => {
+          const base = prev.filter(p => !isMockVehicleRecord(p));
+          const byId = new Map(base.map(item => [item.id, item]));
+          for (const rec of savedRecords) {
+            byId.set(rec.id, rec);
+          }
+          const nextList = deduplicateVehicles(Array.from(byId.values())).uniqueVehicles;
+          saveLocalFleet(nextList).catch(() => {});
+          return nextList;
+        });
+
+        try {
+          for (const b of batches) {
+            await b.commit();
+          }
+        } catch (commitErr) {
+          console.warn("Could not commit to remote Firestore, saved locally in browser:", commitErr);
         }
-      } catch (commitErr) {
-        console.warn("Could not commit to remote Firestore, saved locally in browser:", commitErr);
+
+        await fetchInitialData();
+        const details: string[] = [];
+        if (createdCount > 0) details.push(`${createdCount} novo(s)`);
+        if (updatedCount > 0) details.push(`${updatedCount} atualizado(s)`);
+        if (duplicateBlockedCount > 0) details.push(`${duplicateBlockedCount} duplicado(s) bloqueado(s)`);
+        if (skippedCount > 0) details.push(`${skippedCount} fora do pátio autorizado`);
+        toast.success(`Planilha salva: ${details.join(', ')}.`);
+        return true;
       }
 
-      if (addedCount > 0) {
-        fetchInitialData();
-        alert(`${addedCount} veículo(s) cadastrado(s) com sucesso!`);
-        return true;
-      } else {
-        alert('Nenhum dado válido para salvar. Preencha pelo menos a Placa, Chassi ou Renavam.');
+      if (duplicateBlockedCount > 0) {
+        toast.error(`Operação bloqueada: ${duplicateBlockedCount} veículo(s) duplicado(s) detectado(s) (placa, chassi, renavam ou patrimônio já cadastrado).`);
         return false;
       }
-    } catch(e) {
+      if (skippedCount > 0) {
+        toast.error(`Nenhum veículo cadastrado: todos os ${skippedCount} veículo(s) pertencem a pátios fora da sua autorização (${userAllowedPatios.join(', ')}).`);
+        return false;
+      }
+      if (unchangedCount > 0) {
+        toast.info('Nenhuma alteração pendente nos registros da planilha.');
+        return true;
+      }
+      toast.info('Nenhum dado válido para salvar. Preencha pelo menos a Placa, Chassi, Renavam ou Patrimônio.');
+      return false;
+    } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, "vehicles");
       return false;
     } finally {
@@ -1883,25 +2486,38 @@ const App = () => {
   };
 
   const handleLoadMockData = async () => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não pode carregar dados de teste.');
+      return;
+    }
+
+    const allowedMockVehicles = userIsRestricted
+      ? MOCK_VEHICLES.filter(v => isVehicleAllowed(v))
+      : MOCK_VEHICLES;
+    const allowedMockPlacas = new Set(allowedMockVehicles.map(v => v.placa));
+    const allowedMockInspections = userIsRestricted
+      ? MOCK_INSPECTIONS.filter(insp => allowedMockPlacas.has(insp.placa))
+      : MOCK_INSPECTIONS;
+
     try {
       localStorage.removeItem('argos_deleted_laudo_ids');
       localStorage.removeItem('argos_laudos_cleared');
     } catch (e) {
       console.warn("Error resetting deleted markers:", e);
     }
-    setFrota(MOCK_VEHICLES);
-    setInspectedResults(MOCK_INSPECTIONS);
+    setFrota(allowedMockVehicles);
+    setInspectedResults(allowedMockInspections);
     try {
-      localStorage.setItem('argos_local_backup_laudos', JSON.stringify(MOCK_INSPECTIONS));
+      localStorage.setItem('argos_local_backup_laudos', JSON.stringify(allowedMockInspections));
     } catch (e) {
       console.warn("Local storage error:", e);
     }
 
-    if (isOnline && user) {
-      setLoadingTask({ type: 'loading', message: 'Sincronizando 5 laudos com fotos no Firebase Firestore...', progress: 30 });
+    if (isOnline && user && allowedMockVehicles.length > 0) {
+      setLoadingTask({ type: 'loading', message: 'Sincronizando laudos de teste no Firebase Firestore...', progress: 30 });
       try {
         const batch = writeBatch(db);
-        MOCK_VEHICLES.forEach(v => {
+        allowedMockVehicles.forEach(v => {
           if (v.id) {
             const vRef = doc(db, "vehicles", v.id);
             batch.set(vRef, { 
@@ -1912,7 +2528,7 @@ const App = () => {
             }, { merge: true });
           }
         });
-        MOCK_INSPECTIONS.forEach(insp => {
+        allowedMockInspections.forEach(insp => {
           if (insp.id) {
             const iRef = doc(db, "inspections", insp.id);
             batch.set(iRef, { 
@@ -1924,23 +2540,24 @@ const App = () => {
           }
         });
         await batch.commit();
-        toast.success("5 laudos fictícios (com fotos de chassi e motor) gravados no Firebase Firestore!");
+        toast.success(`${allowedMockInspections.length} laudo(s) fictício(s) gravados no Firebase Firestore!`);
       } catch (err) {
         console.warn("Aviso ao sincronizar mock com Firebase:", err);
-        toast.info("5 laudos com fotos carregados com sucesso (preservados localmente no navegador)!");
+        toast.info(`${allowedMockInspections.length} laudo(s) com fotos carregados localmente!`);
       } finally {
         setLoadingTask(null);
       }
     } else {
-      toast.success("5 laudos fictícios com fotos de chassi e motor carregados com sucesso!");
+      toast.success(`${allowedMockInspections.length} laudo(s) fictício(s) carregados com sucesso!`);
     }
   };
 
-  const evaluatedPlacaSet = new Set(inspectedResults.map((r: any) => r.placa));
-  const impededPlacaSet = new Set(inspectedResults.filter((r: any) => r.class === 'IMPEDIMENTOS' || r.hasImpediment).map((r: any) => r.placa));
+  const evaluatedPlacaSet = new Set(allowedInspectedResults.map((r: any) => normalizeVehicleToken(r.placa)).filter(Boolean));
+  const impededPlacaSet = new Set(allowedInspectedResults.filter((r: any) => r.class === 'IMPEDIMENTOS' || r.hasImpediment).map((r: any) => normalizeVehicleToken(r.placa)).filter(Boolean));
 
-  const filteredFrotaFinal = frota.filter(v => {
-    if (selectedYard && String(v.municipio || '').toUpperCase() !== selectedYard) return false;
+  const filteredFrotaFinal = allowedFrota.filter(v => {
+
+    if (selectedYard && getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key !== selectedYard) return false;
 
     const matchesSearch = String(v.placa || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                           String(v.modelo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1949,10 +2566,12 @@ const App = () => {
                           String(v.posicao || '').toLowerCase().includes(searchTerm.toLowerCase());
     if (!matchesSearch) return false;
 
-    const isVistoriado = evaluatedPlacaSet.has(v.placa);
-    if (statusFilter === 'vistoriados' && (!isVistoriado || impededPlacaSet.has(v.placa))) return false;
+    const normPlaca = normalizeVehicleToken(v.placa);
+    const isVistoriado = Boolean(normPlaca && evaluatedPlacaSet.has(normPlaca));
+    const isImpedido = Boolean(normPlaca && impededPlacaSet.has(normPlaca));
+    if (statusFilter === 'vistoriados' && (!isVistoriado || isImpedido)) return false;
     if (statusFilter === 'pendentes' && isVistoriado) return false;
-    if (statusFilter === 'impedidos' && !impededPlacaSet.has(v.placa)) return false;
+    if (statusFilter === 'impedidos' && !isImpedido) return false;
 
     if (uploaderFilter !== 'todos') {
       const uploader = v.uploadedByEmail || 'Desconhecido';
@@ -1993,29 +2612,45 @@ const App = () => {
 
   const availableBrands = useMemo(() => {
     const list = selectedYard 
-      ? frota.filter(v => String(v.municipio || '').toUpperCase() === selectedYard)
-      : frota;
+      ? allowedFrota.filter(v => getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key === selectedYard)
+      : allowedFrota;
     const brands = new Set(list.map(v => String(v.modelo || '').split(' ')[0].toUpperCase()));
     return Array.from(brands).filter(b => b !== '').sort();
-  }, [frota, selectedYard]);
+  }, [allowedFrota, selectedYard]);
 
   const availableModels = useMemo(() => {
     let list = selectedYard 
-      ? frota.filter(v => String(v.municipio || '').toUpperCase() === selectedYard)
-      : frota;
-    
+      ? allowedFrota.filter(v => getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key === selectedYard)
+      : allowedFrota;
     if (brandFilter !== 'todos') {
       list = list.filter(v => String(v.modelo || '').split(' ')[0].toUpperCase() === String(brandFilter || '').toUpperCase());
     }
     
     const models = new Set(list.map(v => String(v.modelo || '').toUpperCase()));
     return Array.from(models).filter(m => m !== '').sort();
-  }, [frota, selectedYard, brandFilter]);
+  }, [allowedFrota, selectedYard, brandFilter]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   const handleBulkDeleteVehicles = async () => {
+    if (!canWriteOperations) {
+      setShowBulkDeleteConfirm(false);
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para excluir veículos.');
+      return;
+    }
     if (selectedVehicles.length === 0) return;
+
+    // Validação de segurança territorial: só permite exclusão de veículos em pátios autorizados
+    if (userIsRestricted) {
+      const unauthorized = selectedVehicles.filter(id => {
+        const v = frota.find(f => f.id === id);
+        return !isVehicleAllowed(v);
+      });
+      if (unauthorized.length > 0) {
+        toast.error(`Acesso negado: Você selecionou ${unauthorized.length} veículo(s) de pátio(s) fora da sua autorização (${userAllowedPatios.join(', ')}). Exclusão cancelada.`);
+        return;
+      }
+    }
     setLoadingTask({ type: 'exclusion', message: 'Excluindo veículos...', progress: 0 });
     try {
       const chunks = [];
@@ -2048,12 +2683,29 @@ const App = () => {
   };
 
   const handleBulkDeleteYards = async () => {
+    if (!canWriteOperations) {
+      setShowYardDeleteConfirm(false);
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para excluir pátios.');
+      return;
+    }
     if (selectedYardsForBulk.length === 0) return;
+
+    const vehiclesInSelectedYards = frota.filter(v => 
+      selectedYardsForBulk.includes(getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key)
+    );
+
+    if (userIsRestricted) {
+      const hasUnauthorizedVehicle = vehiclesInSelectedYards.some(v => !isVehicleAllowed(v));
+      if (hasUnauthorizedVehicle) {
+        setShowYardDeleteConfirm(false);
+        toast.error(`Acesso negado: Existem veículos fora dos seus pátios autorizados (${userAllowedPatios.join(', ')}). Exclusão cancelada.`);
+        return;
+      }
+    }
+
     setLoadingTask({ type: 'exclusion', message: 'Apagando pátios...', progress: 0 });
     try {
-      const vehiclesToDelete = frota.filter(v => 
-        selectedYardsForBulk.includes(String(v.municipio || 'NÃO INFORMADO').toUpperCase())
-      );
+      const vehiclesToDelete = vehiclesInSelectedYards;
       
       if (vehiclesToDelete.length === 0) {
         setSelectedYardsForBulk([]);
@@ -2063,7 +2715,7 @@ const App = () => {
       }
 
       const vehicleIds = vehiclesToDelete.map(v => v.id).filter(id => id && id.length > 0);
-      const vehiclePlacas = vehiclesToDelete.map(v => v.placa).filter(p => p && p.length > 0);
+      const vehiclePlacas = new Set(vehiclesToDelete.map(v => normalizeVehicleToken(v.placa)).filter(Boolean));
       
       const chunks = [];
       for (let i = 0; i < vehicleIds.length; i += 500) {
@@ -2077,11 +2729,7 @@ const App = () => {
           batch.delete(doc(db, "vehicles", id as string));
         }
 
-        // Also try to find and delete inspections if any
-        // Note: This is simplified. Ideally we'd query by plate if we had many, 
-        // but for a few yards deleting the vehicles is the main goal.
-        // We'll filter the currently loaded inspections to find ones to delete.
-        const inspectionsToDelete = inspectedResults.filter(r => vehiclePlacas.includes(r.placa));
+        const inspectionsToDelete = inspectedResults.filter(r => vehiclePlacas.has(normalizeVehicleToken(r.placa)));
         for (const insp of inspectionsToDelete) {
           if (insp.id) {
             batch.delete(doc(db, "inspections", insp.id));
@@ -2093,10 +2741,10 @@ const App = () => {
         setLoadingTask({ type: 'exclusion', message: 'Apagando pátios...', progress: (processedCount / vehicleIds.length) * 100 });
       }
 
-      setFrota(prev => prev.filter(v => !selectedYardsForBulk.includes(String(v.municipio || 'NÃO INFORMADO').toUpperCase())));
-      setInspectedResults(prev => prev.filter(r => !vehiclePlacas.includes(r.placa)));
+      setFrota(prev => prev.filter(v => !selectedYardsForBulk.includes(getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key)));
+      setInspectedResults(prev => prev.filter(r => !vehiclePlacas.has(normalizeVehicleToken(r.placa))));
       try {
-        const deletedInspIds = inspectedResults.filter(r => vehiclePlacas.includes(r.placa)).map(i => i.id).filter(Boolean);
+        const deletedInspIds = inspectedResults.filter(r => vehiclePlacas.has(normalizeVehicleToken(r.placa))).map(i => i.id).filter(Boolean);
         const deletedRaw = localStorage.getItem('argos_deleted_laudo_ids');
         const deletedIds: string[] = deletedRaw ? JSON.parse(deletedRaw) : [];
         deletedInspIds.forEach(id => { if (!deletedIds.includes(id)) deletedIds.push(id); });
@@ -2105,7 +2753,7 @@ const App = () => {
         const localRaw = localStorage.getItem('argos_local_backup_laudos');
         if (localRaw) {
           const localList: any[] = JSON.parse(localRaw);
-          const filteredList = localList.filter((it: any) => !deletedInspIds.includes(it.id) && !vehiclePlacas.includes(it.placa));
+          const filteredList = localList.filter((it: any) => !deletedInspIds.includes(it.id) && !vehiclePlacas.has(normalizeVehicleToken(it.placa)));
           localStorage.setItem('argos_local_backup_laudos', JSON.stringify(filteredList));
         }
       } catch (storageErr) {
@@ -2123,6 +2771,10 @@ const App = () => {
   };
 
   const handleRenameYard = async () => {
+    if (!isAdminMaster) {
+      toast.error('Apenas Administradores Master podem renomear pátios.');
+      return;
+    }
     if (!editingYard) return;
     const { originalName, name, address } = editingYard;
     
@@ -2131,10 +2783,32 @@ const App = () => {
       return;
     }
 
+    const targetIdentity = getCanonicalYardIdentity(name, address);
+    const duplicateYard = yardStats.find(([existingKey, existingStats]) => {
+      if (existingKey === originalName) return false;
+      if (existingKey === targetIdentity.key) return true;
+      if (
+        targetIdentity.address &&
+        existingStats.address &&
+        canonicalizeRegisteredYardAddress(existingStats.address).toUpperCase() === targetIdentity.address.toUpperCase()
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    if (duplicateYard) {
+      toast.error(`Bloqueado: já existe outro pátio cadastrado com o identificador ou endereço "${duplicateYard[1].displayName || duplicateYard[0]}".`);
+      return;
+    }
+
+    const nextMunicipio = targetIdentity.displayName !== 'NÃO INFORMADO' ? targetIdentity.displayName : name.trim().toUpperCase();
+    const nextAddress = targetIdentity.address || address.trim();
+
     setLoadingTask({ type: 'loading', message: 'Atualizando pátio...' });
     
     try {
-      const vehiclesInYard = frota.filter(v => String(v.municipio || 'NÃO INFORMADO').toUpperCase() === originalName);
+      const vehiclesInYard = frota.filter(v => getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key === originalName);
       
       const chunks = [];
       const batchSize = 500;
@@ -2148,28 +2822,28 @@ const App = () => {
         chunk.forEach(v => {
           if (v.id) {
             batch.update(doc(db, "vehicles", v.id), {
-              municipio: name.trim().toUpperCase(),
-              enderecoPatio: address.trim()
+              municipio: nextMunicipio,
+              enderecoPatio: nextAddress
             });
           }
         });
         await batch.commit();
         processed += chunk.length;
-        setLoadingTask({ type: 'loading', message: 'Atualizando pátio...', progress: (processed / vehiclesInYard.length) * 100 });
+        setLoadingTask({ type: 'loading', message: 'Atualizando pátio...', progress: (processed / Math.max(1, vehiclesInYard.length)) * 100 });
       }
 
       // Local state update
       setFrota(prev => prev.map(v => 
-        String(v.municipio || 'NÃO INFORMADO').toUpperCase() === originalName 
-          ? { ...v, municipio: name.trim().toUpperCase(), enderecoPatio: address.trim() }
+        getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key === originalName 
+          ? { ...v, municipio: nextMunicipio, enderecoPatio: nextAddress }
           : v
       ));
 
       if (selectedYard === originalName) {
-        setSelectedYard(name.trim().toUpperCase());
+        setSelectedYard(targetIdentity.key);
       }
 
-      toast.success(`Pátio '${originalName}' atualizado com sucesso (${vehiclesInYard.length} veículos).`);
+      toast.success(`Pátio '${nextMunicipio}' atualizado com sucesso (${vehiclesInYard.length} veículos).`);
       setEditingYard(null);
     } catch (err) {
       console.error("Erro ao atualizar pátio:", err);
@@ -2180,11 +2854,11 @@ const App = () => {
   };
 
   const exportLaudosAsAnexoJ = () => {
-    const evaluatedPlacas = new Set(inspectedResults.map(r => r.placa));
-    const vehiclesWithLaudos = frota.filter(v => evaluatedPlacas.has(v.placa));
+    const evaluatedPlacas = new Set(allowedInspectedResults.map(r => normalizeVehicleToken(r.placa)).filter(Boolean));
+    const vehiclesWithLaudos = allowedFrota.filter(v => evaluatedPlacas.has(normalizeVehicleToken(v.placa)));
     
     if (vehiclesWithLaudos.length === 0) {
-      alert("Nenhum veículo com laudo pronto para exportar.");
+      toast.info("Nenhum veículo com laudo pronto para exportar.");
       return;
     }
 
@@ -2193,7 +2867,8 @@ const App = () => {
     setTimeout(() => {
       try {
         const data = vehiclesWithLaudos.map(v => {
-          const laudo = inspectedResults.find(r => r.placa === v.placa);
+          const targetPlaca = normalizeVehicleToken(v.placa);
+          const laudo = allowedInspectedResults.find(r => targetPlaca && normalizeVehicleToken(r.placa) === targetPlaca);
           const fullData = laudo?.fullData || {};
           
           const formatCurrency = (val: any) => {
@@ -2243,9 +2918,12 @@ const App = () => {
 
   const exportVehiclesAsItemJ = (vehiclesToExport?: Vehicle[], customTitle?: string) => {
     let list = vehiclesToExport;
+    if (list && userIsRestricted) {
+      list = list.filter(v => isVehicleAllowed(v));
+    }
     if (!list || list.length === 0) {
       if (selectedVehicles.length > 0) {
-        list = frota.filter(v => selectedVehicles.includes(v.id || ''));
+        list = allowedFrota.filter(v => selectedVehicles.includes(v.id || ''));
       } else {
         list = filteredFrotaFinal;
       }
@@ -2283,7 +2961,8 @@ const App = () => {
         };
 
         const data = list.map((v, idx) => {
-          const laudo = inspectedResults.find(r => r.placa && v.placa && r.placa.trim().toUpperCase() === v.placa.trim().toUpperCase());
+          const targetPlaca = normalizeVehicleToken(v.placa);
+          const laudo = inspectedResults.find(r => targetPlaca && normalizeVehicleToken(r.placa) === targetPlaca);
           const fullData = (laudo?.fullData as any) || {};
 
           const enderecoCompleto = v.enderecoPatio || (v.endereco ? `${v.endereco.rua || ''}, ${v.endereco.num || ''} - ${v.endereco.bairro || ''}`.replace(/^[,\s-]+|[,\s-]+$/g, '') : '');
@@ -2618,12 +3297,17 @@ const App = () => {
   };
 
   const handleTabelaGeralUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para importar planilhas.');
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setLoadingTask({ type: 'inclusion', message: 'Carregando frota...' });
+    setLoadingTask({ type: 'inclusion', message: 'Validando duplicidades e carregando frota...' });
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = event.target?.result;
         const workbook = XLSX.read(data, { type: 'binary' });
@@ -2693,14 +3377,12 @@ const App = () => {
             }
 
             // Second pass: Regex word boundary match, but ignore columns matching excludeRegex
-            // We treat underscores and other non-alphanumeric chars as boundaries
             for (const k of keys) {
               const normalizedK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
               const found = rowKeys.find(rk => {
                 const normalizedRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
                 if (excludeRegex && excludeRegex.test(normalizedRK)) return false;
                 
-                // Allow matching "placa" in "placa_veiculo" by treating _ as boundary
                 const searchRK = normalizedRK.replace(/_/g, ' ');
                 const regex = new RegExp(`\\b${normalizedK}\\b`);
                 return regex.test(searchRK) || normalizedRK.includes(normalizedK);
@@ -2720,14 +3402,14 @@ const App = () => {
             const firstRowKeys = Object.keys(jsonData[0] || {});
             hasOrdColumn = firstRowKeys.some(rk => {
                const nRK = rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-               return possibleOrdKeys.includes(nRK) || nRK === 'n'; // Check for variations
+               return possibleOrdKeys.includes(nRK) || nRK === 'n';
             });
           }
 
           const newFrota = jsonData.map((row: any, index: number) => {
             const rawFipe = getVal(row, ['fipe', 'valor', 'avaliacao', 'fipe valor']);
             
-            const rawEnderecoCombo = getVal(row, ['endereço do pátio', 'endereco do patio', 'endereco patio']);
+            const rawEnderecoCombo = getVal(row, ['endereço do pátio', 'endereco do patio', 'endereco patio', 'endereco do patio', 'localizacao']);
             let extractedRua = '';
             let extractedNum = '';
             let extractedBairro = '';
@@ -2746,6 +3428,10 @@ const App = () => {
               }
             }
 
+            const rawMunicipio = getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao']);
+            const canonicalAddr = canonicalizeRegisteredYardAddress(rawEnderecoCombo) || String(rawEnderecoCombo || '').trim();
+            const canonicalYard = getCanonicalYardIdentity(rawMunicipio, canonicalAddr);
+
             return {
               _ord: getVal(row, ['ord', 'ord.', 'ordem', 'n', 'n.', 'nº', 'item']),
               id: `upload-${Date.now()}-${index}`,
@@ -2760,7 +3446,7 @@ const App = () => {
               })(),
               chassi: getVal(row, ['chassi', 'chassis', 'serie']),
               motor: getVal(row, ['motor', 'n motor', 'numero motor', 'núm. do motor']),
-              municipio: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao']),
+              municipio: canonicalYard.displayName !== 'NÃO INFORMADO' ? canonicalYard.displayName : String(rawMunicipio || '').trim().toUpperCase(),
               cor: getVal(row, ['cor', 'pintura', 'cor/doc', 'cor/doc.']),
               ano: getVal(row, ['ano', 'fabricacao', 'ano/mod']),
               comb: getVal(row, ['comb', 'comb.', 'combustivel', 'combustível']),
@@ -2770,12 +3456,12 @@ const App = () => {
               precoMinimo: getVal(row, ['preco minimo', 'preco_minimo', 'valor minimo', 'preço mínimo']),
               situacaoDetran: getVal(row, ['situacao detran', 'situacao_detran', 'detran', 'situação detran']),
               patrimonio: getVal(row, ['patrimonio', 'gpm', 'tombo', 'n gpm', 'n patrimonio', 'patrimônio', 'gpm/patrimonio']),
-              enderecoPatio: rawEnderecoCombo || getVal(row, ['endereco do patio', 'endereco patio', 'localizacao', 'endereço do pátio']),
+              enderecoPatio: canonicalAddr,
               endereco: {
                 rua: extractedRua || getVal(row, ['rua', 'logradouro', 'endereco', 'endereço']),
                 num: extractedNum || getVal(row, ['num', 'numero', 'nº', 'número'], /\b(motor|chassi|patrimonio|serie)\b/),
                 bairro: extractedBairro || getVal(row, ['bairro', 'distrito', 'vila']),
-                cidade: getVal(row, ['municipio', 'cidade', 'unidade', 'comarca', 'lotacao'])
+                cidade: canonicalYard.displayName !== 'NÃO INFORMADO' ? canonicalYard.displayName : rawMunicipio
               }
             };
           });
@@ -2787,118 +3473,136 @@ const App = () => {
             const hasModel = f.modelo && String(f.modelo).trim().length > 0;
             const hasRenavam = f.renavam && String(f.renavam).trim().length > 0;
 
-            // If any identification or basic info is present, we consider it a valid row
             if (hasPlaca || hasChassi || hasPatrimonio || hasModel || hasRenavam) return true;
-
-            // If there's an Ord column, check if it has any content
             if (hasOrdColumn) {
                return f._ord !== undefined && f._ord !== '' && f._ord !== null;
             }
-            
             return false;
           });
 
-          // Filter out mock vehicles from deduplication check
-          const isMockVehicle = (f: Vehicle) => ['ABC-1234', 'XYZ-9876', 'DEF-5678', 'JKL-3456', 'MNO-7890'].includes(f.placa || '');
-          const realExistingFrota = frota.filter(f => !isMockVehicle(f));
-
-          // Deduplicate incoming list (both against existing real fleet and within itself)
-          const validFrota: any[] = [];
-          const normalizeStr = (s: any) => typeof s === 'string' ? s.replace(/[^A-Za-z0-9]/g, '').toUpperCase() : String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-          
-          for (const newVeh of validFrotaRaw) {
-            const nPlaca = normalizeStr(newVeh.placa);
-            const nPat = normalizeStr(newVeh.patrimonio);
-            const nChassi = normalizeStr(newVeh.chassi);
-            
-            const existsInDb = realExistingFrota.some(f => 
-              (nPlaca && normalizeStr(f.placa) === nPlaca) || 
-              (nPat && normalizeStr(f.patrimonio) === nPat) || 
-              (nChassi && normalizeStr(f.chassi) === nChassi)
-            );
-            
-            const existsInQueue = validFrota.some(f => 
-              (nPlaca && normalizeStr(f.placa) === nPlaca) || 
-              (nPat && normalizeStr(f.patrimonio) === nPat) || 
-              (nChassi && normalizeStr(f.chassi) === nChassi)
-            );
-            
-            if (!existsInDb && !existsInQueue) {
-              validFrota.push(newVeh);
+          // Consulta a base mais recente no Firestore para impedir qualquer duplicidade
+          let remoteExisting = frota.filter(f => !isMockVehicleRecord(f));
+          if (isOnline && (user || auth.currentUser)) {
+            try {
+              const vSnap = await getDocs(query(collection(db, "vehicles")));
+              remoteExisting = vSnap.docs
+                .map(d => ({ ...d.data(), id: d.id } as Vehicle))
+                .filter(f => !isMockVehicleRecord(f));
+            } catch (readErr) {
+              console.warn('Erro ao consultar base remota para deduplicação no upload:', readErr);
             }
           }
 
+          const existingKeySet = new Set<string>();
+          const existingIdSet = new Set<string>();
+          for (const ex of remoteExisting) {
+            if (ex.id) existingIdSet.add(ex.id);
+            for (const k of getVehicleFingerprintKeys(ex)) {
+              existingKeySet.add(k);
+            }
+          }
+
+          const batchKeySet = new Set<string>();
+          const validFrota: any[] = [];
+          let duplicateBlockedCount = 0;
+          let unauthorizedSkippedCount = 0;
+
+          for (const newVeh of validFrotaRaw) {
+            const keys = getVehicleFingerprintKeys(newVeh as Partial<Vehicle>);
+            const detId = getDeterministicVehicleDocId(newVeh as Partial<Vehicle>);
+
+            const isDuplicate =
+              keys.some(k => existingKeySet.has(k) || batchKeySet.has(k)) ||
+              (detId !== null && existingIdSet.has(detId));
+
+            if (isDuplicate) {
+              duplicateBlockedCount++;
+              continue;
+            }
+
+            if (userIsRestricted && !isVehicleAllowed(newVeh)) {
+              unauthorizedSkippedCount++;
+              continue;
+            }
+
+            const assignedId = detId || newVeh.id;
+            if (detId) existingIdSet.add(detId);
+            keys.forEach(k => batchKeySet.add(k));
+            validFrota.push({ ...newVeh, id: assignedId });
+          }
+
           if (validFrota.length > 0) {
-            // Immediately save to memory state & local IndexedDB storage
             setFrota(prev => {
-              const base = prev.filter(p => !isMockVehicle(p));
-              const merged = [...validFrota, ...base.filter(p => !validFrota.some(v => (v.placa && v.placa === p.placa) || (v.chassi && v.chassi === p.chassi)))];
+              const base = prev.filter(p => !isMockVehicleRecord(p));
+              const merged = deduplicateVehicles([...validFrota, ...base]).uniqueVehicles;
               saveLocalFleet(merged).catch(() => {});
               return merged;
             });
 
-            // Upload to Firestore
-            const uploadVehicles = async () => {
-              try {
-                const currentUid = user?.uid || auth.currentUser?.uid;
-                const currentEmail = user?.email || auth.currentUser?.email || 'unknown';
+            // Upload to Firestore using deterministic IDs
+            try {
+              const currentUid = user?.uid || auth.currentUser?.uid;
+              const currentEmail = user?.email || auth.currentUser?.email || 'unknown';
 
-                if (currentUid) {
-                  const chunks = [];
-                  for (let i = 0; i < validFrota.length; i += 500) {
-                    chunks.push(validFrota.slice(i, i + 500));
-                  }
-
-                  let processedCount = 0;
-                  for (const chunk of chunks) {
-                    const batch = writeBatch(db);
-                    for (const v of chunk) {
-                      const newDocRef = doc(collection(db, "vehicles"));
-                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                      const { id, _ord, ...rest } = v;
-                      batch.set(newDocRef, {
-                        ...rest,
-                        uploadedAt: serverTimestamp(),
-                        uploadedBy: currentUid,
-                        uploadedByEmail: currentEmail
-                      });
-                    }
-                    await batch.commit();
-                    processedCount += chunk.length;
-                    setLoadingTask({ type: 'inclusion', message: 'Sincronizando frota com Firebase...', progress: (processedCount / validFrota.length) * 100 });
-                  }
-                  await fetchInitialData();
-                } else {
-                  console.info("Veículos salvos localmente no dispositivo (offline/desconectado).");
+              if (currentUid) {
+                const chunks = [];
+                for (let i = 0; i < validFrota.length; i += 450) {
+                  chunks.push(validFrota.slice(i, i + 450));
                 }
 
-                setActiveTab('selecao');
-                alert(`${validFrota.length} veículos carregados com sucesso! ${validFrotaRaw.length - validFrota.length > 0 ? `(${validFrotaRaw.length - validFrota.length} duplicados ignorados)` : ''}`);
-              } catch (e) {
-                console.warn("Aviso ao sincronizar com Firestore:", e);
-                alert(`${validFrota.length} veículos salvos localmente no dispositivo.`);
-              } finally {
-                setLoadingTask(null);
-                e.target.value = ''; // Reset input
+                let processedCount = 0;
+                for (const chunk of chunks) {
+                  const batch = writeBatch(db);
+                  for (const v of chunk) {
+                    const targetId = getDeterministicVehicleDocId(v) || doc(collection(db, "vehicles")).id;
+                    const newDocRef = doc(db, "vehicles", targetId);
+                    const cleanPayload = buildCleanVehiclePayload(v);
+                    batch.set(newDocRef, {
+                      ...cleanPayload,
+                      uploadedAt: serverTimestamp(),
+                      uploadedBy: currentUid,
+                      uploadedByEmail: currentEmail
+                    });
+                  }
+                  await batch.commit();
+                  processedCount += chunk.length;
+                  setLoadingTask({ type: 'inclusion', message: 'Sincronizando frota com Firebase...', progress: (processedCount / validFrota.length) * 100 });
+                }
+                await fetchInitialData();
+              } else {
+                console.info("Veículos salvos localmente no dispositivo (offline/desconectado).");
               }
-            };
-            uploadVehicles();
+
+              setActiveTab('selecao');
+              const ignoredDetails: string[] = [];
+              if (duplicateBlockedCount > 0) ignoredDetails.push(`${duplicateBlockedCount} duplicado(s) bloqueado(s)`);
+              if (unauthorizedSkippedCount > 0) ignoredDetails.push(`${unauthorizedSkippedCount} fora do(s) pátio(s) autorizado(s)`);
+              toast.success(`${validFrota.length} veículos carregados com sucesso!${ignoredDetails.length > 0 ? ` (${ignoredDetails.join(', ')})` : ''}`);
+            } catch (syncErr) {
+              console.warn("Aviso ao sincronizar com Firestore:", syncErr);
+              toast.info(`${validFrota.length} veículos salvos localmente no dispositivo.`);
+            } finally {
+              setLoadingTask(null);
+              e.target.value = '';
+            }
           } else {
-            if (validFrotaRaw.length > 0) {
-               alert(`Todos os ${validFrotaRaw.length} veículos da planilha já estão cadastrados no sistema.`);
+            if (duplicateBlockedCount > 0 && unauthorizedSkippedCount === 0) {
+               toast.warning(`Upload bloqueado: todos os ${duplicateBlockedCount} veículo(s) desta planilha já estão cadastrados na base (duplicidade evitada).`);
+            } else if (unauthorizedSkippedCount > 0) {
+               toast.error(`Nenhum veículo cadastrado: ${unauthorizedSkippedCount} veículo(s) desta planilha pertencem a pátios fora da sua autorização (${userAllowedPatios.join(', ')}).`);
+            } else if (validFrotaRaw.length > 0) {
+               toast.info(`Todos os ${validFrotaRaw.length} veículos da planilha já estão cadastrados no sistema.`);
             } else {
-               alert('Não foi possível identificar os veículos. Verifique o cabeçalho da planilha.');
+               toast.error('Não foi possível identificar os veículos. Verifique o cabeçalho da planilha.');
             }
             setLoadingTask(null);
-            e.target.value = ''; // Reset input
+            e.target.value = '';
           }
         } else {
-          // jsonData.length === 0
           setLoadingTask(null);
           e.target.value = '';
         }
       } else {
-        // rawRows.length === 0
         setLoadingTask(null);
         e.target.value = '';
       }
@@ -2911,7 +3615,18 @@ const App = () => {
 };
 
   const startInspection = (v: any) => {
-    const existing = inspectedResults.find(r => r.placa === v.placa);
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para iniciar ou editar vistorias.');
+      return;
+    }
+    // Restrição territorial por pátio: só permite iniciar vistoria de veículos autorizados
+    if (userIsRestricted && !isVehicleAllowed(v)) {
+      toast.error(`Acesso negado: Seu perfil tem acesso restrito ao(s) pátio(s): ${userAllowedPatios.join(', ')}. Não é permitido vistoriar este veículo.`);
+      return;
+    }
+
+    const targetPlaca = normalizeVehicleToken(v.placa);
+    const existing = inspectedResults.find(r => targetPlaca && normalizeVehicleToken(r.placa) === targetPlaca);
     if (existing && existing.fullData) {
       setLaudoData(existing.fullData);
     } else {
@@ -3046,13 +3761,33 @@ const App = () => {
   };
 
   const deleteLaudo = (laudoId: string) => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para excluir laudos.');
+      return;
+    }
     setLaudoToDelete(laudoId);
   };
 
   const confirmDeleteLaudo = async () => {
     if (!laudoToDelete) return;
+    if (!canWriteOperations) {
+      setLaudoToDelete(null);
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para excluir laudos.');
+      return;
+    }
     const targetId = laudoToDelete;
     const itemToDelete = inspectedResults.find(r => r.id === targetId || r.fullData?.id === targetId);
+
+    // Validação de segurança territorial: só permite exclusão de laudos de veículos autorizados
+    if (userIsRestricted) {
+      const vehicleForLaudo = frota.find(f => f.placa === itemToDelete?.placa) || itemToDelete?.fullData?.vehicle;
+      if (!isVehicleAllowed(vehicleForLaudo)) {
+        setLaudoToDelete(null);
+        toast.error(`Acesso negado: Você não tem permissão para excluir laudos fora do seu pátio autorizado (${userAllowedPatios.join(', ')}).`);
+        return;
+      }
+    }
+
     const fullDataId = itemToDelete?.fullData?.id;
     setLoadingTask({ type: 'exclusion', message: 'Excluindo vistoria...' });
     
@@ -3105,8 +3840,27 @@ const App = () => {
   };
 
   const handleBulkDeleteLaudos = async () => {
+    if (!canWriteOperations) {
+      setShowBulkLaudosDeleteConfirm(false);
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para excluir laudos.');
+      return;
+    }
     if (selectedLaudos.length === 0) return;
     const selected = [...selectedLaudos];
+
+    // Validação de segurança territorial: só permite exclusão em lote se todos os laudos pertencerem a pátios autorizados
+    if (userIsRestricted) {
+      const hasUnauthorized = selected.some(id => {
+        const found = inspectedResults.find(r => r.id === id || r.fullData?.id === id);
+        const vehicle = frota.find(f => f.placa === found?.placa) || found?.fullData?.vehicle;
+        return !isVehicleAllowed(vehicle);
+      });
+      if (hasUnauthorized) {
+        toast.error(`Acesso negado: Uma ou mais vistorias selecionadas pertencem a veículos de pátios fora da sua autorização (${userAllowedPatios.join(', ')}). Exclusão cancelada.`);
+        return;
+      }
+    }
+
     const targetIdsSet = new Set<string>(selected);
     selected.forEach(id => {
       const found = inspectedResults.find(r => r.id === id || r.fullData?.id === id);
@@ -3215,6 +3969,16 @@ const App = () => {
   };
 
   const saveFinal = async () => {
+    if (!canWriteOperations) {
+      toast.error('Acesso negado: perfil Visualizador não tem permissão para gravar ou editar laudos.');
+      return;
+    }
+    // Restrição territorial por pátio: só permite salvar ou atualizar laudos para veículos de pátios autorizados
+    if (userIsRestricted && !isVehicleAllowed(laudoData?.vehicle)) {
+      toast.error(`Acesso negado: Você só pode cadastrar ou salvar laudos para veículos do(s) pátio(s) autorizados: ${userAllowedPatios.join(', ')}.`);
+      return;
+    }
+
     setLoadingTask({ type: 'loading', message: 'Salvando laudo com segurança...' });
     try {
       const totalScore = Object.values(laudoData.scores).reduce((acc: number, b: any) => acc + (b.v || 0), 0);
@@ -3447,6 +4211,171 @@ const App = () => {
           <span className={`text-[10px] font-bold tracking-widest uppercase ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
             Corpo de Bombeiros Militar do Paraná
           </span>
+        </div>
+      </div>
+    );
+  }
+
+  // --- GATE DE ACESSO E AUTORIZAÇÃO OBRIGATÓRIA ---
+  // Se o usuário está conectado mas NÃO é Administrador Master:
+  // 1. Enquanto o perfil estiver carregando ou verificando no Firestore:
+  if (user && !isAdminMaster && !systemUserProfile) {
+    return (
+      <div className={`min-h-screen flex flex-col justify-center items-center p-6 ${isDark ? 'bg-slate-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
+        <div className="w-16 h-16 rounded-3xl bg-blue-600/10 border border-blue-500/20 text-blue-500 flex items-center justify-center mb-4">
+          <RotateCw size={32} className="animate-spin text-blue-500" />
+        </div>
+        <h2 className="text-xl font-bold tracking-tight">Verificando autorização de acesso...</h2>
+        <p className="text-xs opacity-70 mt-1 font-mono">{user.email}</p>
+        <p className="text-xs text-slate-400 mt-4">Conectando aos servidores do CSM:ARGOS...</p>
+      </div>
+    );
+  }
+
+  // 2. Se o status for PENDENTE DE APROVAÇÃO pelos administradores:
+  if (user && !isAdminMaster && systemUserProfile?.status === 'pending') {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${isDark ? 'bg-slate-950 text-white' : 'bg-slate-900 text-gray-900'}`}>
+        <Toaster position="top-right" richColors />
+        <div className={`max-w-lg w-full p-8 rounded-3xl border shadow-2xl ${isDark ? 'bg-slate-900 border-amber-500/30 text-white' : 'bg-white border-amber-200 text-gray-900'}`}>
+          <div className="flex flex-col items-center text-center">
+            <div className="relative mb-5">
+              <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/30 text-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/10">
+                <Clock size={40} className="animate-pulse" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-black text-xs shadow">
+                !
+              </div>
+            </div>
+
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 mb-3 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+              Aguardando Autorização
+            </div>
+
+            <h2 className="text-2xl font-black tracking-tight mb-2">
+              Solicitação de Acesso em Análise
+            </h2>
+
+            <p className={`text-sm mb-6 leading-relaxed ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+              Olá, <strong className="text-blue-500">{user.displayName || user.email?.split('@')[0]}</strong>! Seu primeiro acesso ({user.providerData?.some(p => p.providerId === 'google.com') ? 'via Google' : 'E-mail e Senha'}) foi registrado no sistema CSM:ARGOS.
+              O seu acesso foi submetido à aprovação do <strong>Administrador</strong>, que irá liberar sua conta e atribuir quais pátios você poderá visualizar.
+            </p>
+
+            {registrationSyncError && (
+              <div className="w-full p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-500 text-xs font-semibold mb-4 text-left">
+                {registrationSyncError}
+              </div>
+            )}
+
+            {/* Card de Identificação do Operador */}
+            <div className={`w-full p-4 rounded-2xl border text-left mb-6 ${isDark ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-gray-200'}`}>
+              <div className="flex items-center gap-3">
+                {user.photoURL ? (
+                  <img 
+                    src={user.photoURL} 
+                    alt="Foto do Usuário" 
+                    referrerPolicy="no-referrer"
+                    className="w-12 h-12 rounded-xl object-cover border border-slate-300 dark:border-slate-700 shadow"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white font-black text-lg flex items-center justify-center shadow">
+                    {(user.displayName || user.email || '?')[0].toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-sm truncate">{user.displayName || user.email?.split('@')[0] || 'Novo Usuário'}</p>
+                  <p className="text-xs opacity-70 truncate font-mono">{user.email}</p>
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-slate-500/15 text-slate-600 dark:text-slate-300 border border-slate-500/20">
+                      Perfil inicial: Visualizador
+                    </span>
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                      Solicitado em: {systemUserProfile.requestedAt ? new Date(systemUserProfile.requestedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Hoje'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Administradores Responsáveis */}
+            <div className={`w-full p-4 rounded-2xl border text-xs mb-6 text-left space-y-2 ${isDark ? 'bg-amber-950/20 border-amber-900/40 text-amber-200/90' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+              <p className="font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                <ShieldCheck size={14} className="text-amber-500" />
+                Administradores Responsáveis pela Liberação:
+              </p>
+              <div className="space-y-1 pl-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-bold text-amber-600 dark:text-amber-400">cbmpr.leilao@gmail.com</span>
+                  <span className="text-[10px] opacity-75">Administrador Master</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-bold text-amber-600 dark:text-amber-400">lorranogab@gmail.com</span>
+                  <span className="text-[10px] opacity-75">Administrador Master</span>
+                </div>
+              </div>
+              <p className="text-[11px] opacity-80 pt-1 border-t border-amber-500/20">
+                Assim que o Administrador aprovar sua solicitação e definir os pátios autorizados, esta tela será desbloqueada automaticamente em tempo real.
+              </p>
+            </div>
+
+            {/* Ações */}
+            <div className="w-full flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={handleCheckApproval}
+                disabled={checkingApproval}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold uppercase tracking-wider text-xs bg-amber-600 hover:bg-amber-700 text-white transition-all shadow-lg shadow-amber-600/20 cursor-pointer disabled:opacity-50"
+              >
+                <RotateCw size={14} className={checkingApproval ? 'animate-spin' : ''} />
+                {checkingApproval ? 'Verificando...' : registrationSyncError ? 'Reenviar Solicitação' : 'Verificar Aprovação'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  auth.signOut();
+                  setSystemUserProfile(null);
+                  setRegistrationSyncError(null);
+                }}
+                className={`flex items-center justify-center gap-2 py-3 px-5 rounded-xl font-bold uppercase tracking-wider text-xs border transition-all cursor-pointer ${isDark ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-gray-200 text-gray-700 hover:bg-gray-100'}`}
+              >
+                <LogOut size={14} />
+                Sair / Trocar Conta
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Se a conta estiver INATIVA / SUSPENSA:
+  if (user && !isAdminMaster && systemUserProfile?.status === 'inactive') {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${isDark ? 'bg-slate-950 text-white' : 'bg-slate-900 text-gray-900'}`}>
+        <Toaster position="top-right" richColors />
+        <div className={`max-w-md w-full p-8 rounded-3xl border text-center shadow-2xl ${isDark ? 'bg-slate-900 border-red-500/30 text-white' : 'bg-white border-red-200 text-gray-900'}`}>
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center mx-auto mb-4 border border-red-500/20">
+            <AlertTriangle size={36} />
+          </div>
+          <h2 className="text-2xl font-black mb-2">Conta Desativada</h2>
+          <p className="text-sm opacity-80 mb-6 leading-relaxed">
+            O seu acesso ao sistema CSM:ARGOS foi suspenso ou desativado temporariamente pela administração.
+          </p>
+          <div className={`p-4 rounded-xl border text-xs mb-6 ${isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+            Para reativar sua conta ou solicitar acesso, contate os administradores:
+            <strong className="block text-amber-500 font-mono mt-1 text-sm">cbmpr.leilao@gmail.com ou lorranogab@gmail.com</strong>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              auth.signOut();
+              setSystemUserProfile(null);
+            }}
+            className="w-full py-3 rounded-xl font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-700 text-white transition-all shadow-lg shadow-red-600/20"
+          >
+            Sair da Conta
+          </button>
         </div>
       </div>
     );
@@ -3755,13 +4684,15 @@ const App = () => {
             <span className="text-sm">Início</span>
           </button>
 
-          <button 
-            onClick={() => { setActiveTab('incluir_veiculos'); setIsMenuOpen(false); }} 
-            className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'incluir_veiculos' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
-          >
-            <Plus size={20} />
-            <span className="text-sm text-left">Incluir Veículos</span>
-          </button>
+          {canWriteOperations && (
+            <button 
+              onClick={() => { setActiveTab('incluir_veiculos'); setIsMenuOpen(false); }} 
+              className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'incluir_veiculos' ? (isDark ? 'bg-blue-600/10 text-blue-400 font-bold' : 'bg-blue-50 text-[#003B95] font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+            >
+              <Plus size={20} />
+              <span className="text-sm text-left">Incluir Veículos</span>
+            </button>
+          )}
           
           <button 
             onClick={() => { setActiveTab('selecao'); setIsMenuOpen(false); }} 
@@ -3778,6 +4709,19 @@ const App = () => {
             <ShieldCheck size={20} />
             <span className="text-sm text-left">Laudos Prontos</span>
           </button>
+
+          {isAdminMaster && (
+            <button 
+              onClick={() => { setActiveTab('usuarios'); setIsMenuOpen(false); }} 
+              className={`flex items-center space-x-3 p-3 rounded-xl transition-all duration-200 ${activeTab === 'usuarios' ? (isDark ? 'bg-purple-600/10 text-purple-400 font-bold' : 'bg-purple-50 text-purple-700 font-bold') : (isDark ? 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900')}`}
+            >
+              <Users size={20} />
+              <span className="text-sm text-left">Gestão de Usuários</span>
+              <span className="ml-auto text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-600 dark:text-purple-400">
+                Admin
+              </span>
+            </button>
+          )}
 
           <div className="pt-8 mt-auto flex flex-col space-y-4">
              <button 
@@ -3831,6 +4775,13 @@ const App = () => {
               <span className="hidden sm:inline">{isOnline ? 'Conectado' : 'Modo Offline'}</span>
             </div>
 
+            {userIsRestricted && (
+              <div className={`hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-800'}`} title={`Acesso restrito ao(s) pátio(s): ${userAllowedPatios.join(', ')}`}>
+                <MapPin size={12} className="text-amber-500 shrink-0" />
+                <span>Pátio: {userAllowedPatios.join(', ')}</span>
+              </div>
+            )}
+
             {deferredPrompt && (
               <button 
                 onClick={handleInstallClick}
@@ -3883,10 +4834,10 @@ const App = () => {
              </div>
 
              {/* Main Metrics */}
-             <DashboardSummary frota={frota} inspectedResults={inspectedResults} isDark={isDark} setActiveTab={setActiveTab} />
+             <DashboardSummary frota={allowedFrota} inspectedResults={allowedInspectedResults} isDark={isDark} setActiveTab={setActiveTab} />
 
              {/* Detailed metrics row */}
-             <AnalyticsHeader inspectedResults={inspectedResults} isDark={isDark} />
+             <AnalyticsHeader inspectedResults={allowedInspectedResults} isDark={isDark} />
 
              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-4">
                 {/* Quick Actions */}
@@ -3920,18 +4871,20 @@ const App = () => {
                       </div>
                     </button>
 
-                    <button 
-                      onClick={() => setActiveTab('incluir_veiculos')}
-                      className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
-                    >
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-gray-100'}`}>
-                        <Database size={20} />
-                      </div>
-                      <div className="text-left">
-                        <p className="font-bold text-sm">Gestão de Tabela</p>
-                        <p className="text-[10px] opacity-70 uppercase font-semibold">Importar dados de frota</p>
-                      </div>
-                    </button>
+                    {canWriteOperations && (
+                      <button 
+                        onClick={() => setActiveTab('incluir_veiculos')}
+                        className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-gray-100'}`}>
+                          <Database size={20} />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold text-sm">Gestão de Tabela</p>
+                          <p className="text-[10px] opacity-70 uppercase font-semibold">Importar dados de frota</p>
+                        </div>
+                      </button>
+                    )}
 
                     <button 
                       onClick={() => setShowUserManualModal(true)}
@@ -3945,6 +4898,21 @@ const App = () => {
                         <p className="text-[10px] opacity-70 uppercase font-semibold">Guia operacional e download PDF</p>
                       </div>
                     </button>
+
+                    {isAdminMaster && (
+                      <button 
+                        onClick={() => setActiveTab('usuarios')}
+                        className={`w-full p-4 rounded-2xl border flex items-center space-x-4 transition-all hover:scale-[1.02] active:scale-[0.98] ${isDark ? 'bg-purple-600/10 border-purple-500/20 text-purple-400 hover:bg-purple-600/20' : 'bg-purple-50 border-purple-100 text-purple-800 hover:bg-purple-100'}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isDark ? 'bg-purple-500/20 text-purple-400' : 'bg-white text-purple-600'}`}>
+                          <Users size={20} />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold text-sm">Gestão de Usuários</p>
+                          <p className="text-[10px] opacity-70 uppercase font-semibold">Visualizar e editar operadores</p>
+                        </div>
+                      </button>
+                    )}
                   </div>
 
                   {/* System Tip Card */}
@@ -3970,8 +4938,8 @@ const App = () => {
                   </div>
 
                   <div className="relative pl-8 space-y-8 before:content-[''] before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
-                    {inspectedResults.length > 0 ? (
-                      inspectedResults.slice(0, 5).map((res: any, idx: number) => (
+                    {allowedInspectedResults.length > 0 ? (
+                      allowedInspectedResults.slice(0, 5).map((res: any, idx: number) => (
                         <div 
                           key={res.id || idx}
                           className="relative group animate-in slide-in-from-left duration-500"
@@ -4052,7 +5020,9 @@ const App = () => {
                <div>
                   <h1 className={`text-3xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Frota em Pátios</h1>
                   <p className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                    {selectedYard ? `Veículos vinculados a ${selectedYard}` : 'Selecione a localização para visualizar os veículos vinculados.'}
+                    {selectedYard
+                      ? `Veículos vinculados a ${yardStats.find(([k]) => k === selectedYard)?.[1]?.displayName || selectedYard}`
+                      : 'Selecione a localização para visualizar os veículos vinculados.'}
                   </p>
                </div>
                {selectedYard && (
@@ -4065,6 +5035,53 @@ const App = () => {
                  </button>
                )}
             </header>
+
+            {userIsRestricted && (
+              <div className={`p-4 rounded-2xl border flex items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300 ${isDark ? 'bg-amber-950/30 border-amber-800/60 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0 border border-amber-500/30">
+                    <MapPin size={22} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                      <span>Acesso Territorial Restrito aos Pátios Autorizados</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 font-black">
+                        {userAllowedPatios.join(', ')}
+                      </span>
+                    </h4>
+                    <p className="text-xs opacity-80 mt-0.5">
+                      Seu usuário possui permissão concedida pelo Administrador para visualizar, vistoriar, cadastrar e excluir veículos exclusivamente vinculados a: <strong>{userAllowedPatios.join(', ')}</strong>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!selectedYard && canWriteOperations && duplicateVehicleDocIds.length > 0 && (
+              <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300 ${isDark ? 'bg-blue-950/30 border-blue-800/60 text-blue-200' : 'bg-blue-50 border-blue-200 text-blue-950'}`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-500 flex items-center justify-center shrink-0 border border-blue-500/30">
+                    <ShieldCheck size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider">
+                      {duplicateVehicleDocIds.length} registro(s) duplicado(s) detectado(s) na base de dados
+                    </h4>
+                    <p className="text-xs opacity-80 mt-0.5">
+                      A visualização já está deduplicada e novos cadastros duplicados estão bloqueados. Você pode higienizar os registros excedentes do banco com segurança preservando os laudos.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCleanDuplicateVehicles}
+                  disabled={cleaningDuplicates}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider shrink-0 transition-all shadow-sm flex items-center gap-2"
+                >
+                  <Sparkles size={15} />
+                  <span>{cleaningDuplicates ? 'Higienizando...' : 'Limpar Duplicidades da Base'}</span>
+                </button>
+              </div>
+            )}
 
             {!selectedYard ? (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
@@ -4082,13 +5099,9 @@ const App = () => {
                         <>
                           <button 
                             onClick={() => {
-                              const selectedNorm = selectedYardsForBulk.map(y => y.toUpperCase().trim());
-                              const vehiclesInYards = frota.filter(v => {
-                                const m = (v.municipio || '').toUpperCase().trim();
-                                const p = (v.enderecoPatio || '').toUpperCase().trim();
-                                const c = (v.endereco?.cidade || '').toUpperCase().trim();
-                                return selectedNorm.some(sn => m === sn || p.includes(sn) || c === sn);
-                              });
+                              const vehiclesInYards = allowedFrota.filter(v =>
+                                selectedYardsForBulk.includes(getCanonicalYardIdentity(v.municipio, v.enderecoPatio).key)
+                              );
                               exportVehiclesAsItemJ(vehiclesInYards, `Patios_${selectedYardsForBulk.length}`);
                             }}
                             className="flex items-center space-x-2 px-4 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 transition-all animate-in zoom-in-95"
@@ -4097,25 +5110,27 @@ const App = () => {
                             <Download size={14} />
                             <span>Exportar Planilha Item J</span>
                           </button>
-                          <button 
-                            onClick={() => setShowYardDeleteConfirm(true)}
-                            className="flex items-center space-x-2 px-4 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20 transition-all animate-in zoom-in-95"
-                          >
-                            <Trash2 size={14} />
-                            <span>Apagar ({selectedYardsForBulk.length})</span>
-                          </button>
+                          {canWriteOperations && (
+                            <button 
+                              onClick={() => setShowYardDeleteConfirm(true)}
+                              className="flex items-center space-x-2 px-4 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20 transition-all animate-in zoom-in-95"
+                            >
+                              <Trash2 size={14} />
+                              <span>Apagar ({selectedYardsForBulk.length})</span>
+                            </button>
+                          )}
                         </>
                       )}
                       <button
-                        onClick={() => exportVehiclesAsItemJ(frota, 'Frota_Completa')}
+                        onClick={() => exportVehiclesAsItemJ(allowedFrota, 'Frota_Completa')}
                         className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase border transition-all ${isDark ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-400 hover:bg-emerald-900/50' : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'}`}
-                        title="Exportar planilha nos moldes do Item J de toda a frota cadastrada"
+                        title="Exportar planilha nos moldes do Item J de toda a frota autorizada"
                       >
                         <Download size={13} />
                         <span>Planilha Geral (Item J)</span>
                       </button>
                       <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
-                        Total: {frota.length} Veículos
+                        Total: {allowedFrota.length} Veículos
                       </div>
                     </div>
                   </div>
@@ -4160,12 +5175,12 @@ const App = () => {
                               </div>
                             </div>
                             <div className="flex justify-between items-center mb-1">
-                              <div className={`text-base font-black uppercase tracking-tight truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>{city}</div>
+                              <div className={`text-base font-black uppercase tracking-tight truncate ${isDark ? 'text-white' : 'text-blue-900'}`}>{stats.displayName || city}</div>
                               {isAdminMaster && (
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setEditingYard({ originalName: city, name: city, address: stats.address || '' });
+                                    setEditingYard({ originalName: city, name: stats.displayName || city, address: stats.address || '' });
                                   }}
                                   className={`p-1.5 rounded-lg transition-colors shrink-0 ml-2 ${isDark ? 'hover:bg-white/10 text-slate-500 hover:text-blue-400' : 'hover:bg-gray-100 text-gray-400 hover:text-blue-600'}`}
                                 >
@@ -4235,7 +5250,7 @@ const App = () => {
                         <div className="flex items-center gap-2 ml-auto flex-wrap">
                           <button
                             onClick={() => {
-                              const selectedObj = frota.filter(v => selectedVehicles.includes(v.id || ''));
+                              const selectedObj = allowedFrota.filter(v => selectedVehicles.includes(v.id || ''));
                               exportVehiclesAsItemJ(selectedObj);
                             }}
                             disabled={selectedVehicles.length === 0}
@@ -4250,14 +5265,16 @@ const App = () => {
                             <span>Exportar Planilha (Item J){selectedVehicles.length > 0 ? ` (${selectedVehicles.length})` : ''}</span>
                           </button>
 
-                          <button 
-                            onClick={() => setShowBulkDeleteConfirm(true)} 
-                            disabled={selectedVehicles.length === 0} 
-                            className="flex items-center space-x-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-40 transition-all shadow-sm active:scale-95"
-                          >
-                            <Trash2 size={16} />
-                            <span className="hidden sm:inline">Excluir</span>
-                          </button>
+                          {canWriteOperations && (
+                            <button 
+                              onClick={() => setShowBulkDeleteConfirm(true)} 
+                              disabled={selectedVehicles.length === 0} 
+                              className="flex items-center space-x-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-40 transition-all shadow-sm active:scale-95"
+                            >
+                              <Trash2 size={16} />
+                              <span className="hidden sm:inline">Excluir</span>
+                            </button>
+                          )}
 
                           <button 
                             onClick={() => { setIsDeleteMode(false); setSelectedVehicles([]); }} 
@@ -4346,7 +5363,7 @@ const App = () => {
                             <button 
                               onClick={() => {
                                 if (selectedVehicles.length > 0) {
-                                  const selectedObj = frota.filter(v => selectedVehicles.includes(v.id || ''));
+                                  const selectedObj = allowedFrota.filter(v => selectedVehicles.includes(v.id || ''));
                                   exportVehiclesAsItemJ(selectedObj);
                                 } else {
                                   exportVehiclesAsItemJ(filteredFrotaFinal);
@@ -4386,8 +5403,9 @@ const App = () => {
                 <div className="space-y-3">
                   {filteredFrotaFinal.length > 0 ? (
                     paginatedFrota.map((v, i) => {
-                      const isVistoriado = evaluatedPlacaSet.has(v.placa);
-                      const hasImpediment = impededPlacaSet.has(v.placa);
+                      const normPlaca = normalizeVehicleToken(v.placa);
+                      const isVistoriado = Boolean(normPlaca && evaluatedPlacaSet.has(normPlaca));
+                      const hasImpediment = Boolean(normPlaca && impededPlacaSet.has(normPlaca));
                       const isSelected = selectedVehicles.includes(v.id || '');
                       return (
                         <div 
@@ -4488,7 +5506,7 @@ const App = () => {
                               }}
                               className={`flex-1 sm:flex-none px-4 py-3 sm:py-2 rounded-xl font-black uppercase tracking-widest text-[10px] sm:text-[9px] transition-all flex items-center justify-center gap-2 ${isVistoriado ? 'bg-emerald-600 text-white hover:bg-emerald-700' : (isDark ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-[#003B95] text-white hover:bg-blue-800')}`}
                             >
-                              {isVistoriado ? 'Visualizar' : 'Vistoriar'}
+                              {isVistoriado ? 'Visualizar' : canWriteOperations ? 'Vistoriar' : 'Detalhes'}
                             </button>
                           </div>
                         </div>
@@ -4538,6 +5556,7 @@ const App = () => {
             key={showDigitalId.id}
             vehicle={showDigitalId} 
             isDark={isDark} 
+            canEdit={canWriteOperations}
             onClose={() => setShowDigitalId(null)} 
             onUpdate={(id, updates) => {
               setFrota(prev => prev.map(v => v.id === id ? { ...v, ...updates } : v));
@@ -5644,7 +6663,7 @@ const App = () => {
                  <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Seleção de Pátios</h1>
                  <p className={`text-lg font-medium opacity-60 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Selecione uma localização para gerenciar a frota específica</p>
                </div>
-               {selectedYardsForBulk.length > 0 && (
+               {canWriteOperations && selectedYardsForBulk.length > 0 && (
                  <button 
                    onClick={() => setShowYardDeleteConfirm(true)}
                    className="flex items-center space-x-2 px-6 py-2.5 rounded-2xl bg-red-500 hover:bg-red-600 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-red-500/20 transition-all animate-in slide-in-from-right-4 mb-2"
@@ -5654,6 +6673,32 @@ const App = () => {
                  </button>
                )}
              </header>
+
+             {canWriteOperations && duplicateVehicleDocIds.length > 0 && (
+               <div className={`mb-8 p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm ${isDark ? 'bg-blue-950/30 border-blue-800/60 text-blue-200' : 'bg-blue-50 border-blue-200 text-blue-950'}`}>
+                 <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-500 flex items-center justify-center shrink-0 border border-blue-500/30">
+                     <ShieldCheck size={20} />
+                   </div>
+                   <div>
+                     <h4 className="text-xs font-black uppercase tracking-wider">
+                       {duplicateVehicleDocIds.length} veículo(s) duplicado(s) detectado(s) no banco de dados
+                     </h4>
+                     <p className="text-xs opacity-80 mt-0.5">
+                       Os cartões já exibem a frota deduplicada. Clique ao lado para remover os documentos redundantes do banco preservando todos os laudos.
+                     </p>
+                   </div>
+                 </div>
+                 <button
+                   onClick={handleCleanDuplicateVehicles}
+                   disabled={cleaningDuplicates}
+                   className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider shrink-0 transition-all shadow-sm flex items-center gap-2"
+                 >
+                   <Sparkles size={15} />
+                   <span>{cleaningDuplicates ? 'Higienizando...' : 'Limpar Duplicidades da Base'}</span>
+                 </button>
+               </div>
+             )}
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
                {yardStats.map(([city, stats]: [string, any]) => {
@@ -5707,7 +6752,7 @@ const App = () => {
                        </div>
                        
                        <h3 className={`text-xl font-black uppercase tracking-tight mb-1 truncate ${isDark ? 'text-white' : 'text-[#003B95]'}`}>
-                         {city}
+                         {stats.displayName || city}
                        </h3>
                        <p className={`text-[10px] font-bold uppercase tracking-widest opacity-50 mb-4 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                          Pátio de Gestão Regional
@@ -5717,7 +6762,7 @@ const App = () => {
                              <button 
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setEditingYard({ originalName: city, name: city, address: stats.address || '' });
+                                  setEditingYard({ originalName: city, name: stats.displayName || city, address: stats.address || '' });
                                 }}
                                 className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-500 hover:text-blue-400' : 'hover:bg-gray-100 text-gray-400 hover:text-blue-600'}`}
                              >
@@ -5803,7 +6848,7 @@ const App = () => {
                  </h2>
                  <p className={`text-sm mt-3 font-medium flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                    <Database size={14} className="opacity-50" />
-                   Base de dados: {inspectedResults.length} {inspectedResults.length === 1 ? 'veículo homologado' : 'veículos homologados'}
+                   Base de dados: {allowedInspectedResults.length} {allowedInspectedResults.length === 1 ? 'veículo homologado' : 'veículos homologados'}
                  </p>
                </div>
                
@@ -5887,11 +6932,13 @@ const App = () => {
                  <div className="flex gap-2 ml-auto">
                    {!isExportMode ? (
                      <>
-                        <button onClick={handleLoadMockData} className={`h-14 px-5 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-amber-950/30 border-amber-800/80 text-amber-300 hover:bg-amber-900/40' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`} title="Carregar 5 laudos e veículos fictícios para teste">
-                          <Sparkles size={16} className="text-amber-500" />
-                          <span className="hidden sm:inline">Carregar Testes</span>
-                          <span className="sm:hidden">Testes</span>
-                        </button>
+                        {canWriteOperations && (
+                          <button onClick={handleLoadMockData} className={`h-14 px-5 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-amber-950/30 border-amber-800/80 text-amber-300 hover:bg-amber-900/40' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`} title="Carregar 5 laudos e veículos fictícios para teste">
+                            <Sparkles size={16} className="text-amber-500" />
+                            <span className="hidden sm:inline">Carregar Testes</span>
+                            <span className="sm:hidden">Testes</span>
+                          </button>
+                        )}
                         <button onClick={exportLaudosAsAnexoJ} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
                           <Download size={18} className="opacity-50" />
                           <span className="hidden sm:inline">Exportar Planilha</span>
@@ -5902,11 +6949,13 @@ const App = () => {
                           <span className="hidden sm:inline">Exportar Laudos</span>
                           <span className="sm:hidden">Laudos</span>
                         </button>
-                        <button onClick={() => setIsExportMode(true)} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
-                          <Trash2 size={18} className="opacity-50 text-red-500" />
-                          <span className="hidden sm:inline">Excluir em Lote</span>
-                          <span className="sm:hidden">Excluir</span>
-                        </button>
+                        {canWriteOperations && (
+                          <button onClick={() => setIsExportMode(true)} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
+                            <Trash2 size={18} className="opacity-50 text-red-500" />
+                            <span className="hidden sm:inline">Excluir em Lote</span>
+                            <span className="sm:hidden">Excluir</span>
+                          </button>
+                        )}
                      </>
                    ) : (
                      <>
@@ -5914,10 +6963,12 @@ const App = () => {
                           {bulkExporting ? <RotateCw size={18} className="animate-spin" /> : <Printer size={18} />}
                           <span>{bulkExporting ? "Processando..." : `Exportar (${selectedLaudos.length})`}</span>
                         </button>
-                        <button onClick={() => { if (selectedLaudos.length > 0) setShowBulkLaudosDeleteConfirm(true); }} disabled={selectedLaudos.length === 0} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${isDark ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/20'}`}>
-                          <Trash2 size={18} />
-                          <span>Confirmar Exclusão (${selectedLaudos.length})</span>
-                        </button>
+                        {canWriteOperations && (
+                          <button onClick={() => { if (selectedLaudos.length > 0) setShowBulkLaudosDeleteConfirm(true); }} disabled={selectedLaudos.length === 0} className={`h-14 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 ${selectedLaudos.length === 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${isDark ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-red-600 text-white hover:bg-red-700 shadow-red-500/20'}`}>
+                            <Trash2 size={18} />
+                            <span>Confirmar Exclusão (${selectedLaudos.length})</span>
+                          </button>
+                        )}
                         <button onClick={() => {setIsExportMode(false); setSelectedLaudos([]);}} className={`h-14 px-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border flex items-center justify-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-red-400 hover:bg-slate-700' : 'bg-white border-gray-200 text-red-500 hover:bg-red-50'}`}>
                           <X size={18} />
                         </button>
@@ -6030,18 +7081,22 @@ const App = () => {
                            <Eye size={16} />
                            <span className="hidden lg:inline text-[9px] font-black uppercase">Ver</span>
                         </button>
-                        <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setSourceTab(activeTab); setActiveTab('mimico'); }} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
-                           <Pencil size={16} />
-                           <span className="hidden lg:inline text-[9px] font-black uppercase">Editar</span>
-                        </button>
+                        {canWriteOperations && (
+                          <button onClick={() => { setLaudoData(r.fullData); setViewMode(false); setSourceTab(activeTab); setActiveTab('mimico'); }} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Editar">
+                             <Pencil size={16} />
+                             <span className="hidden lg:inline text-[9px] font-black uppercase">Editar</span>
+                          </button>
+                        )}
                         <button onClick={() => setViewingHistory(r.id)} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-50 border-gray-100 text-gray-500 hover:text-[#003B95] hover:border-gray-200'}`} title="Histórico">
                            <History size={16} />
                            <span className="hidden lg:inline text-[9px] font-black uppercase">Histórico</span>
                         </button>
-                        <button onClick={() => deleteLaudo(r.id)} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-red-900/20 border-red-800/50 text-red-400 hover:bg-red-800' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100'}`} title="Excluir">
-                           <Trash2 size={16} />
-                           <span className="hidden lg:inline text-[9px] font-black uppercase">Excluir</span>
-                        </button>
+                        {canWriteOperations && (
+                          <button onClick={() => deleteLaudo(r.id)} className={`p-2.5 rounded-lg border transition-all flex items-center gap-2 ${isDark ? 'bg-red-900/20 border-red-800/50 text-red-400 hover:bg-red-800' : 'bg-red-50 border-red-100 text-red-500 hover:bg-red-100'}`} title="Excluir">
+                             <Trash2 size={16} />
+                             <span className="hidden lg:inline text-[9px] font-black uppercase">Excluir</span>
+                          </button>
+                        )}
                      </div>
                    </div>
                  );
@@ -6059,7 +7114,7 @@ const App = () => {
            </div>
          )}
 
-        {activeTab === 'incluir_veiculos' && (
+        {activeTab === 'incluir_veiculos' && canWriteOperations && (
           <div className="max-w-4xl mx-auto pt-8 pb-8 px-6">
             <header className="mb-10 text-center md:text-left">
               <h1 className={`text-4xl font-black tracking-tight mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Incluir Veículos</h1>
@@ -6134,14 +7189,28 @@ const App = () => {
 
 
 
-        {activeTab === 'planilha' && (
+        {activeTab === 'planilha' && canWriteOperations && (
           <div className="max-w-7xl mx-auto pt-0 pb-8 px-4 md:px-0 lg:px-0 h-[calc(100vh-5rem)]">
-            <SpreadsheetEditor frota={frota} onSave={handleAddVehiclesPlanilha} isDark={isDark} />
+            <SpreadsheetEditor frota={allowedFrota} onSave={handleAddVehiclesPlanilha} isDark={isDark} />
           </div>
         )}
 
+        {activeTab === 'usuarios' && isAdminMaster && (
+          <UserManagement 
+            isDark={isDark} 
+            currentUser={user} 
+            availableYards={registeredYardAddresses}
+          />
+        )}
+
         {activeTab === 'perfil' && (
-           <UserProfile isDark={isDark} user={user} />
+           <UserProfile 
+             isDark={isDark} 
+             user={user} 
+             systemUserProfile={systemUserProfile}
+             isAdmin={isAdminMaster}
+             onNavigateToUsers={() => setActiveTab('usuarios')}
+           />
         )}
 
         {viewingVehicleDetails && (
@@ -6152,8 +7221,9 @@ const App = () => {
             onStartInspection={handleStartInspectionFromDetails}
             onViewInspection={handleViewInspectionFromDetails}
             isDark={isDark}
-            isVistoriado={evaluatedPlacaSet.has(viewingVehicleDetails.placa)}
-            inspectedResults={inspectedResults}
+            canEdit={canWriteOperations}
+            isVistoriado={Boolean(normalizeVehicleToken(viewingVehicleDetails.placa) && evaluatedPlacaSet.has(normalizeVehicleToken(viewingVehicleDetails.placa)))}
+            inspectedResults={allowedInspectedResults}
             onUpdate={(id: string, updates: any) => {
               setFrota((prev) => prev.map((v) => v.id === id ? { ...v, ...updates } : v));
               setViewingVehicleDetails((prev: any) => prev && prev.id === id ? { ...prev, ...updates } : prev);
